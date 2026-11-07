@@ -4,6 +4,7 @@
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <application
         android:label="Chess Bot"
@@ -22,6 +23,7 @@
 
         <service
             android:name=".OverlayService"
+            android:foregroundServiceType="mediaProjection"
             android:exported="false" />
     </application>
 </manifest>
