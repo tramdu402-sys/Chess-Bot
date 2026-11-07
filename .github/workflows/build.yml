@@ -13,6 +13,15 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Fix file names
+        run: |
+          find app/src/main/res/drawable/ -type f | while read file; do
+            clean_name=$(echo "$file" | tr -d ' ' | tr -d '\r')
+            if [ "$file" != "$clean_name" ]; then
+              mv "$file" "$clean_name"
+            fi
+          done
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -33,3 +42,4 @@ jobs:
           tag_name: v1.1
           name: "Chess Bot v1.1"
           files: app/build/outputs/apk/debug/app-debug.apk
+
