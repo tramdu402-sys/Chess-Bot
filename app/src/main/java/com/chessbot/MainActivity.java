@@ -36,7 +36,7 @@ public class MainActivity extends Activity {
 
         public ChessBackgroundView(Context ctx) {
             super(ctx);
-            darkPaint.setColor(Color.parseColor("#10141A"));
+            darkPaint.setColor(Color.parseColor("#0C1017"));
         }
 
         @Override
@@ -60,7 +60,7 @@ public class MainActivity extends Activity {
         projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
 
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.parseColor("#0B0E13"));
+        root.setBackgroundColor(Color.parseColor("#06080B"));
         root.addView(new ChessBackgroundView(this));
 
         LinearLayout content = new LinearLayout(this);
@@ -69,32 +69,33 @@ public class MainActivity extends Activity {
         content.setPadding(dp(24), dp(40), dp(24), dp(40));
 
         TextView title = new TextView(this);
-        title.setText("CHESS ASSISTANT");
+        title.setText("CHESS SUFFLEUR");
         title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
-        title.setLetterSpacing(0.08f);
+        title.setLetterSpacing(0.12f);
         content.addView(title);
 
         TextView subTitle = new TextView(this);
-        subTitle.setText("Локальный авто-суфлер");
-        subTitle.setTextColor(Color.parseColor("#6F7D8C"));
+        subTitle.setText("Автоматическое чтение экрана");
+        subTitle.setTextColor(Color.parseColor("#5A6578"));
         subTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        subTitle.setPadding(0, dp(4), 0, dp(32));
+        subTitle.setPadding(0, dp(6), 0, dp(36));
         content.addView(subTitle);
 
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(20), dp(20), dp(20), dp(20));
+        card.setPadding(dp(20), dp(22), dp(20), dp(22));
+
         GradientDrawable cardBg = new GradientDrawable();
-        cardBg.setColor(Color.parseColor("#151A22"));
+        cardBg.setColor(Color.parseColor("#11151D"));
         cardBg.setCornerRadius(dp(16));
-        cardBg.setStroke(dp(1), Color.parseColor("#232B38"));
+        cardBg.setStroke(dp(1), Color.parseColor("#1E2430"));
         card.setBackground(cardBg);
 
         TextView eloLabel = new TextView(this);
-        eloLabel.setText("СИЛА ИГРЫ");
-        eloLabel.setTextColor(Color.parseColor("#8E99A8"));
+        eloLabel.setText("СИЛА ИГРЫ (ШАГ 50 ELO)");
+        eloLabel.setTextColor(Color.parseColor("#7D8B9B"));
         eloLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         eloLabel.setTypeface(null, android.graphics.Typeface.BOLD);
         card.addView(eloLabel);
@@ -102,18 +103,27 @@ public class MainActivity extends Activity {
         TextView eloVal = new TextView(this);
         eloVal.setText("1500 ELO");
         eloVal.setTextColor(Color.parseColor("#81B64C"));
-        eloVal.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
+        eloVal.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28);
         eloVal.setTypeface(null, android.graphics.Typeface.BOLD);
-        eloVal.setPadding(0, dp(4), 0, dp(12));
+        eloVal.setPadding(0, dp(4), 0, dp(14));
         card.addView(eloVal);
 
         SeekBar slider = new SeekBar(this);
-        slider.setMax(2500);
-        slider.setProgress(1100);
+        // Диапазон от 400 до 2800 с шагом 50: всего 48 делений ((2800 - 400) / 50)
+        slider.setMax(48);
+        slider.setProgress(22); // 400 + 22 * 50 = 1500 ELO
+
+        GradientDrawable thumb = new GradientDrawable();
+        thumb.setShape(GradientDrawable.OVAL);
+        thumb.setSize(dp(20), dp(20));
+        thumb.setColor(Color.parseColor("#81B64C"));
+        thumb.setStroke(dp(2), Color.WHITE);
+        slider.setThumb(thumb);
+
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                currentElo = 400 + progress;
+                currentElo = 400 + (progress * 50);
                 eloVal.setText(currentElo + " ELO");
             }
             @Override public void onStartTrackingTouch(SeekBar seekBar) {}
@@ -123,8 +133,8 @@ public class MainActivity extends Activity {
         content.addView(card);
 
         TextView hints = new TextView(this);
-        hints.setText("• Двойной тап — мгновенное закрытие\n• Одиночный тап — принудительный пересчёт\n• Ход скрыт до конца таймера");
-        hints.setTextColor(Color.parseColor("#5A6575"));
+        hints.setText("• Сам распознает цвет и ход соперника\n• Одиночный тап — принудительный пересчет\n• Двойной тап — мгновенное закрытие");
+        hints.setTextColor(Color.parseColor("#505A69"));
         hints.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         hints.setPadding(0, dp(24), 0, dp(32));
         hints.setLineSpacing(dp(4), 1f);
@@ -133,11 +143,12 @@ public class MainActivity extends Activity {
         Button btn = new Button(this);
         btn.setText("ЗАПУСТИТЬ ОВЕРЛЕЙ");
         btn.setTextColor(Color.WHITE);
-        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         btn.setTypeface(null, android.graphics.Typeface.BOLD);
+
         GradientDrawable btnBg = new GradientDrawable();
         btnBg.setColor(Color.parseColor("#81B64C"));
-        btnBg.setCornerRadius(dp(14));
+        btnBg.setCornerRadius(dp(12));
         btn.setBackground(btnBg);
         btn.setPadding(0, dp(14), 0, dp(14));
 
