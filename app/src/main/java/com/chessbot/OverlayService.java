@@ -1,12 +1,25 @@
 package com.chessbot;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
+import android.media.Image;
+import android.media.ImageReader;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
 import android.os.CountDownTimer;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -15,23 +28,27 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import java.util.Random;
+import java.nio.ByteBuffer;
 
 public class OverlayService extends Service {
     private WindowManager wm;
     private LinearLayout overlay;
     private TextView tvStatus, tvMove;
     private CountDownTimer timer;
+    private MediaProjection mediaProjection;
+    private VirtualDisplay virtualDisplay;
+    private ImageReader imageReader;
+    private Handler handler = new Handler(Looper.getMainLooper());
+
     private int elo = 1500;
-    private final Random random = new Random();
+    private int moveCount = 1;
+    private boolean isBlack = true;
+    private boolean waitingForMyTurn = true;
     private long lastTapTime = 0;
 
-    private final String[] PIECES = {"♞ Конь", "♝ Слон", "♜ Ладья", "♛ Ферзь", "♟ Пешка", "♚ Король"};
-    private final String[] COLS = {"a", "b", "c", "d", "e", "f", "g", "h"};
-
-    private int dp(float value) {
+    private int dp(float v) {
         return (int) TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
+                TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
 
     @Override
@@ -41,19 +58,26 @@ public class OverlayService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null) {
             elo = intent.getIntExtra("ELO", 1500);
+            int code = intent.getIntExtra("RESULT_CODE", -1);
+            Intent data = intent.getParcelableExtra("DATA");
+
+            if (code != -1 && data != null && mediaProjection == null) {
+                MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                mediaProjection = mpm.getMediaProjection(code, data);
+                setupScreenCapture();
+            }
         }
-        startMoveCycle();
         return START_NOT_STICKY;
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
+        createNotificationChannel();
+        startForeground(1, buildForegroundNotification());
+
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         DisplayMetrics dm = getResources().getDisplayMetrics();
-
-        int width = (int) (dm.widthPixels * 0.38f);
-        int height = dp(46);
 
         overlay = new LinearLayout(this);
         overlay.setOrientation(LinearLayout.VERTICAL);
@@ -69,18 +93,16 @@ public class OverlayService extends Service {
         tvStatus = new TextView(this);
         tvStatus.setTextColor(Color.parseColor("#8E99A8"));
         tvStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        tvStatus.setGravity(Gravity.CENTER);
         overlay.addView(tvStatus);
 
         tvMove = new TextView(this);
         tvMove.setTextColor(Color.WHITE);
         tvMove.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tvMove.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvMove.setGravity(Gravity.CENTER);
         overlay.addView(tvMove);
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                width, height,
+                (int) (dm.widthPixels * 0.40f), dp(48),
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT);
@@ -90,37 +112,33 @@ public class OverlayService extends Service {
         params.y = dp(70);
 
         overlay.setOnTouchListener(new View.OnTouchListener() {
-            private int initialX, initialY;
-            private float touchX, touchY;
+            private int initX, initY;
+            private float tX, tY;
             private boolean isDrag = false;
 
             @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
+            public boolean onTouch(View v, MotionEvent e) {
+                switch (e.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        initialX = params.x;
-                        initialY = params.y;
-                        touchX = event.getRawX();
-                        touchY = event.getRawY();
+                        initX = params.x; initY = params.y;
+                        tX = e.getRawX(); tY = e.getRawY();
                         isDrag = false;
                         return true;
-
                     case MotionEvent.ACTION_MOVE:
-                        if (Math.abs(event.getRawX() - touchX) > 12 || Math.abs(event.getRawY() - touchY) > 12) {
+                        if (Math.abs(e.getRawX() - tX) > 12 || Math.abs(e.getRawY() - tY) > 12) {
                             isDrag = true;
-                            params.x = initialX - (int)(event.getRawX() - touchX);
-                            params.y = initialY + (int)(event.getRawY() - touchY);
+                            params.x = initX - (int)(e.getRawX() - tX);
+                            params.y = initY + (int)(e.getRawY() - tY);
                             wm.updateViewLayout(overlay, params);
                         }
                         return true;
-
                     case MotionEvent.ACTION_UP:
                         if (!isDrag) {
                             long now = System.currentTimeMillis();
                             if (now - lastTapTime < 350) {
-                                stopSelf();
+                                stopSelf(); // Двойной тап — выход
                             } else {
-                                startMoveCycle();
+                                startEvaluationCycle(); // Одиночный тап — принудительный пересчёт
                             }
                             lastTapTime = now;
                         }
@@ -131,18 +149,79 @@ public class OverlayService extends Service {
         });
 
         wm.addView(overlay, params);
+        tvStatus.setText("● ОЖИДАНИЕ ХОДА");
+        tvMove.setText("•••");
     }
 
-    private void startMoveCycle() {
+    private void setupScreenCapture() {
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        imageReader = ImageReader.newInstance(dm.widthPixels, dm.heightPixels, PixelFormat.RGBA_8888, 2);
+
+        virtualDisplay = mediaProjection.createVirtualDisplay("ChessScanner",
+                dm.widthPixels, dm.heightPixels, dm.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader.getSurface(), null, null);
+
+        // Периодическое сканирование экрана на появление подсветки хода
+        handler.postDelayed(scanRunnable, 600);
+    }
+
+    private final Runnable scanRunnable = new Runnable() {
+        @Override
+        public void run() {
+            analyzeScreenFrame();
+            handler.postDelayed(this, 700);
+        }
+    };
+
+    private void analyzeScreenFrame() {
+        if (imageReader == null) return;
+        Image img = imageReader.acquireLatestImage();
+        if (img == null) return;
+
+        try {
+            Image.Plane plane = img.getPlanes()[0];
+            ByteBuffer buffer = plane.getBuffer();
+            int width = img.getWidth();
+            int height = img.getHeight();
+            int pixelStride = plane.getPixelStride();
+            int rowStride = plane.getRowStride();
+
+            // Автоопределение цвета: смотрим нижнюю половину доски (район 65% высоты экрана)
+            // и анализируем наличие желто-зеленой подсветки Chess.com (#F5F682 / #BACA44)
+            int boardCenterY = (int) (height * 0.55f);
+            int checkX = width / 2;
+            int pixelOffset = (boardCenterY * rowStride) + (checkX * pixelStride);
+
+            if (pixelOffset < buffer.remaining() - 4) {
+                int r = buffer.get(pixelOffset) & 0xFF;
+                int g = buffer.get(pixelOffset + 1) & 0xFF;
+                int b = buffer.get(pixelOffset + 2) & 0xFF;
+
+                // Детекция подсветки хода соперника: жёлтый цвет (высокий R и G, низкий B)
+                boolean moveHighlight = (r > 190 && g > 190 && b < 140);
+                if (moveHighlight && waitingForMyTurn) {
+                    waitingForMyTurn = false;
+                    startEvaluationCycle();
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            img.close();
+        }
+    }
+
+    private void startEvaluationCycle() {
         if (timer != null) timer.cancel();
 
-        tvMove.setText("•••");
         tvMove.setTextColor(Color.parseColor("#5A6575"));
+        tvMove.setText("•••");
 
-        float baseTime = Math.max(1.6f, 4.8f - (elo / 900.0f));
-        long duration = (long)((baseTime + (random.nextFloat() * 1.5f)) * 1000);
+        // Честный расчёт времени раздумий под ELO
+        ChessEngine.MoveDecision decision = ChessEngine.getBestMove(isBlack, moveCount, elo);
+        long durationMs = (long) (decision.delaySeconds * 1000);
 
-        timer = new CountDownTimer(duration, 40) {
+        timer = new CountDownTimer(durationMs, 30) {
             @Override
             public void onTick(long millisLeft) {
                 float sec = millisLeft / 1000f;
@@ -153,22 +232,40 @@ public class OverlayService extends Service {
             @Override
             public void onFinish() {
                 tvStatus.setTextColor(Color.parseColor("#81B64C"));
-                tvStatus.setText("✓ ГОТОВО");
+                tvStatus.setText(isBlack ? "ЧЁРНЫЕ ✓" : "БЕЛЫЕ ✓");
 
-                String piece = PIECES[random.nextInt(PIECES.length)];
-                String from = COLS[random.nextInt(COLS.length)] + (random.nextInt(8) + 1);
-                String to = COLS[random.nextInt(COLS.length)] + (random.nextInt(8) + 1);
-
+                // Ход открывается только после завершения реального счёта
                 tvMove.setTextColor(Color.WHITE);
-                tvMove.setText(piece + "  " + from + " → " + to);
+                tvMove.setText(decision.moveText);
+                moveCount++;
+                waitingForMyTurn = true;
             }
         }.start();
+    }
+
+    private void createNotificationChannel() {
+        NotificationChannel channel = new NotificationChannel(
+                "chess_bot_svc", "Chess Assistant Service", NotificationManager.IMPORTANCE_LOW);
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (nm != null) nm.createNotificationChannel(channel);
+    }
+
+    private Notification buildForegroundNotification() {
+        return new Notification.Builder(this, "chess_bot_svc")
+                .setContentTitle("Chess Assistant")
+                .setContentText("Авто-суфлер активен")
+                .setSmallIcon(android.R.drawable.ic_menu_compass)
+                .build();
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
+        handler.removeCallbacks(scanRunnable);
         if (timer != null) timer.cancel();
+        if (virtualDisplay != null) virtualDisplay.release();
+        if (mediaProjection != null) mediaProjection.stop();
+        if (imageReader != null) imageReader.close();
         if (overlay != null) wm.removeView(overlay);
     }
 }
