@@ -1,51 +1,65 @@
 package com.chessbot;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Random;
 
 public class ChessEngine {
     private static final Random RNG = new Random();
 
     public static class MoveDecision {
-        public final String moveText;
+        public final String pieceName;
+        public final String pieceIcon;
+        public final String fromCoord;
+        public final String toCoord;
         public final float delaySeconds;
 
-        public MoveDecision(String moveText, float delaySeconds) {
-            this.moveText = moveText;
+        public MoveDecision(String pieceName, String pieceIcon, String fromCoord, String toCoord, float delaySeconds) {
+            this.pieceName = pieceName;
+            this.pieceIcon = pieceIcon;
+            this.fromCoord = fromCoord;
+            this.toCoord = toCoord;
             this.delaySeconds = delaySeconds;
         }
     }
 
-    // Расчет времени по позиции и ELO (антидетект)
     public static float calculateThinkingTime(int moveNumber, boolean isCapture, int elo) {
         float baseTime;
         if (moveNumber <= 6) {
-            // Дебютные ходы делаются быстрее
-            baseTime = 1.3f + (RNG.nextFloat() * 1.1f);
+            baseTime = 1.3f + (RNG.nextFloat() * 1.0f);
         } else if (isCapture) {
-            // Взятия и размены занимают меньше времени
-            baseTime = 1.1f + (RNG.nextFloat() * 0.9f);
+            baseTime = 1.1f + (RNG.nextFloat() * 0.8f);
         } else {
-            // Миттельшпиль: глубокая позиционная оценка
             float eloFactor = Math.max(0.7f, 1.8f - (elo / 2200f));
-            baseTime = (2.4f * eloFactor) + (RNG.nextFloat() * 2.2f);
+            baseTime = (2.2f * eloFactor) + (RNG.nextFloat() * 2.0f);
         }
-        // Защита от одинаковых таймингов (джиттер)
-        return Math.round((baseTime + (RNG.nextFloat() * 0.4f)) * 100f) / 100f;
+        return Math.round((baseTime + (RNG.nextFloat() * 0.35f)) * 100f) / 100f;
     }
 
-    // Генерация ходов в зависимости от обнаруженного цвета
     public static MoveDecision getBestMove(boolean isBlack, int moveCount, int elo) {
-        String[] blackMoves = {"♟ e7 → e5", "♞ g8 → f6", "♟ c7 → c5", "♟ d7 → d5", "♝ f8 → c5", "♞ b8 → c6"};
-        String[] whiteMoves = {"♟ e2 → e4", "♟ d2 → d4", "♞ g1 → f3", "♟ c2 → c4", "♝ f1 → c4", "♞ b1 → c3"};
+        // Данные: {Имя, Значок, Откуда, Куда}
+        String[][] whitePool = {
+            {"Пешка", "♙", "e2", "e4"},
+            {"Пешка", "♙", "d2", "d4"},
+            {"Конь", "♘", "g1", "f3"},
+            {"Слон", "♗", "f1", "c4"},
+            {"Пешка", "♙", "c2", "c4"},
+            {"Конь", "♘", "b1", "c3"}
+        };
 
-        String move = isBlack 
-                ? blackMoves[RNG.nextInt(blackMoves.length)]
-                : whiteMoves[RNG.nextInt(whiteMoves.length)];
+        String[][] blackPool = {
+            {"Пешка", "♟", "c7", "c5"},
+            {"Пешка", "♟", "e7", "e5"},
+            {"Конь", "♞", "g8", "f6"},
+            {"Слон", "♝", "f8", "c5"},
+            {"Пешка", "♟", "d7", "d5"},
+            {"Конь", "♞", "b8", "c6"}
+        };
 
-        boolean isCapture = RNG.nextFloat() > 0.75f;
+        String[][] pool = isBlack ? blackPool : whitePool;
+        String[] selected = pool[RNG.nextInt(pool.length)];
+
+        boolean isCapture = RNG.nextFloat() > 0.8f;
         float delay = calculateThinkingTime(moveCount, isCapture, elo);
-        return new MoveDecision(move, delay);
+
+        return new MoveDecision(selected[0], selected[1], selected[2], selected[3], delay);
     }
 }
