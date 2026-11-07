@@ -13,14 +13,8 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Fix file names
-        run: |
-          find app/src/main/res/drawable/ -type f | while read file; do
-            clean_name=$(echo "$file" | tr -d ' ' | tr -d '\r')
-            if [ "$file" != "$clean_name" ]; then
-              mv "$file" "$clean_name"
-            fi
-          done
+      - name: Fix filename spaces
+        run: python3 -c "import os; [os.rename(os.path.join(r, f), os.path.join(r, f.strip())) for r, _, fs in os.walk('app/src/main/res') for f in fs if f != f.strip()]"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -39,7 +33,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v1.1
-          name: "Chess Bot v1.1"
+          tag_name: v${{ github.run_number }}
+          name: "Chess Bot Build #${{ github.run_number }}"
           files: app/build/outputs/apk/debug/app-debug.apk
+
 
