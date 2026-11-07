@@ -6,7 +6,6 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
@@ -33,7 +32,7 @@ import java.nio.ByteBuffer;
 public class OverlayService extends Service {
     private WindowManager wm;
     private LinearLayout overlay;
-    private TextView tvStatus, tvMove;
+    private TextView tvLine1, tvLine2, tvLine3;
     private CountDownTimer timer;
     private MediaProjection mediaProjection;
     private VirtualDisplay virtualDisplay;
@@ -42,9 +41,10 @@ public class OverlayService extends Service {
 
     private int elo = 1500;
     private int moveCount = 1;
-    private boolean isBlack = true;
+    private boolean isMyColorWhite = true;
     private boolean waitingForMyTurn = true;
     private long lastTapTime = 0;
+    private int lastHighlightHash = 0;
 
     private int dp(float v) {
         return (int) TypedValue.applyDimension(
@@ -82,27 +82,41 @@ public class OverlayService extends Service {
         overlay = new LinearLayout(this);
         overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setGravity(Gravity.CENTER);
-        overlay.setPadding(dp(10), dp(4), dp(10), dp(4));
+        overlay.setPadding(dp(12), dp(8), dp(12), dp(8));
 
+        // AMOLED-капсула со скруглением и окантовкой
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#EE12161E"));
-        bg.setCornerRadius(dp(12));
-        bg.setStroke(dp(1.5f), Color.parseColor("#81B64C"));
+        bg.setColor(Color.parseColor("#F40D1117"));
+        bg.setCornerRadius(dp(14));
+        bg.setStroke(dp(1.2f), Color.parseColor("#81B64C"));
         overlay.setBackground(bg);
 
-        tvStatus = new TextView(this);
-        tvStatus.setTextColor(Color.parseColor("#8E99A8"));
-        tvStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        overlay.addView(tvStatus);
+        // Строка 1: Статус / Таймер
+        tvLine1 = new TextView(this);
+        tvLine1.setTextColor(Color.parseColor("#7D8B9B"));
+        tvLine1.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvLine1.setGravity(Gravity.CENTER);
+        overlay.addView(tvLine1);
 
-        tvMove = new TextView(this);
-        tvMove.setTextColor(Color.WHITE);
-        tvMove.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        tvMove.setTypeface(null, android.graphics.Typeface.BOLD);
-        overlay.addView(tvMove);
+        // Строка 2: Фигура и крупный значок
+        tvLine2 = new TextView(this);
+        tvLine2.setTextColor(Color.WHITE);
+        tvLine2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tvLine2.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvLine2.setGravity(Gravity.CENTER);
+        tvLine2.setPadding(0, dp(1), 0, dp(1));
+        overlay.addView(tvLine2);
+
+        // Строка 3: Координаты хода
+        tvLine3 = new TextView(this);
+        tvLine3.setTextColor(Color.parseColor("#81B64C"));
+        tvLine3.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tvLine3.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvLine3.setGravity(Gravity.CENTER);
+        overlay.addView(tvLine3);
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                (int) (dm.widthPixels * 0.40f), dp(48),
+                (int) (dm.widthPixels * 0.42f), WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT);
@@ -136,9 +150,9 @@ public class OverlayService extends Service {
                         if (!isDrag) {
                             long now = System.currentTimeMillis();
                             if (now - lastTapTime < 350) {
-                                stopSelf(); // Двойной тап — выход
+                                stopSelf(); // Двойной тап — закрытие
                             } else {
-                                startEvaluationCycle(); // Одиночный тап — принудительный пересчёт
+                                startEvaluationCycle(); // Одиночный тап — пересчет
                             }
                             lastTapTime = now;
                         }
@@ -149,8 +163,9 @@ public class OverlayService extends Service {
         });
 
         wm.addView(overlay, params);
-        tvStatus.setText("● ОЖИДАНИЕ ХОДА");
-        tvMove.setText("•••");
+        tvLine1.setText("● ОЖИДАНИЕ ХОДА");
+        tvLine2.setText("—");
+        tvLine3.setText("...");
     }
 
     private void setupScreenCapture() {
@@ -162,45 +177,50 @@ public class OverlayService extends Service {
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader.getSurface(), null, null);
 
-        // Периодическое сканирование экрана на появление подсветки хода
-        handler.postDelayed(scanRunnable, 600);
+        handler.postDelayed(scanRunnable, 500);
     }
 
     private final Runnable scanRunnable = new Runnable() {
         @Override
         public void run() {
-            analyzeScreenFrame();
-            handler.postDelayed(this, 700);
+            scanBoardState();
+            handler.postDelayed(this, 600);
         }
     };
 
-    private void analyzeScreenFrame() {
+    private void scanBoardState() {
         if (imageReader == null) return;
         Image img = imageReader.acquireLatestImage();
         if (img == null) return;
 
         try {
             Image.Plane plane = img.getPlanes()[0];
-            ByteBuffer buffer = plane.getBuffer();
+            ByteBuffer buf = plane.getBuffer();
             int width = img.getWidth();
             int height = img.getHeight();
-            int pixelStride = plane.getPixelStride();
-            int rowStride = plane.getRowStride();
+            int pStride = plane.getPixelStride();
+            int rStride = plane.getRowStride();
 
-            // Автоопределение цвета: смотрим нижнюю половину доски (район 65% высоты экрана)
-            // и анализируем наличие желто-зеленой подсветки Chess.com (#F5F682 / #BACA44)
-            int boardCenterY = (int) (height * 0.55f);
-            int checkX = width / 2;
-            int pixelOffset = (boardCenterY * rowStride) + (checkX * pixelStride);
+            // Сканируем строго низ экрана (72% высоты), где стоят наши основные фигуры
+            int bottomAreaY = (int) (height * 0.72f);
+            int sampleX = width / 2;
+            int offset = (bottomAreaY * rStride) + (sampleX * pStride);
 
-            if (pixelOffset < buffer.remaining() - 4) {
-                int r = buffer.get(pixelOffset) & 0xFF;
-                int g = buffer.get(pixelOffset + 1) & 0xFF;
-                int b = buffer.get(pixelOffset + 2) & 0xFF;
+            if (offset < buf.remaining() - 4) {
+                int r = buf.get(offset) & 0xFF;
+                int g = buf.get(offset + 1) & 0xFF;
+                int b = buf.get(offset + 2) & 0xFF;
 
-                // Детекция подсветки хода соперника: жёлтый цвет (высокий R и G, низкий B)
-                boolean moveHighlight = (r > 190 && g > 190 && b < 140);
-                if (moveHighlight && waitingForMyTurn) {
+                // Если снизу фигуры белые (светлые пиксели) — мы играем белыми, иначе чёрными
+                int brightness = (r + g + b) / 3;
+                isMyColorWhite = (brightness > 120);
+
+                // Поиск желтой подсветки хода Chess.com (#F5F682)
+                boolean isYellowHighlight = (r > 185 && g > 185 && b < 140);
+                int currentHash = (isYellowHighlight ? 1 : 0) + (r * 10) + g;
+
+                if (isYellowHighlight && (currentHash != lastHighlightHash) && waitingForMyTurn) {
+                    lastHighlightHash = currentHash;
                     waitingForMyTurn = false;
                     startEvaluationCycle();
                 }
@@ -214,29 +234,31 @@ public class OverlayService extends Service {
     private void startEvaluationCycle() {
         if (timer != null) timer.cancel();
 
-        tvMove.setTextColor(Color.parseColor("#5A6575"));
-        tvMove.setText("•••");
+        tvLine2.setText("•••");
+        tvLine3.setText("...");
 
-        // Честный расчёт времени раздумий под ELO
-        ChessEngine.MoveDecision decision = ChessEngine.getBestMove(isBlack, moveCount, elo);
+        // Получаем ход с расчетом фигуры и тайминга
+        ChessEngine.MoveDecision decision = ChessEngine.getBestMove(!isMyColorWhite, moveCount, elo);
         long durationMs = (long) (decision.delaySeconds * 1000);
 
         timer = new CountDownTimer(durationMs, 30) {
             @Override
             public void onTick(long millisLeft) {
                 float sec = millisLeft / 1000f;
-                tvStatus.setTextColor(Color.parseColor("#E5A93C"));
-                tvStatus.setText(String.format("⏳  %.2f сек", sec));
+                tvLine1.setTextColor(Color.parseColor("#E5A93C"));
+                tvLine1.setText(String.format("⏳ %.2f сек", sec));
             }
 
             @Override
             public void onFinish() {
-                tvStatus.setTextColor(Color.parseColor("#81B64C"));
-                tvStatus.setText(isBlack ? "ЧЁРНЫЕ ✓" : "БЕЛЫЕ ✓");
+                tvLine1.setTextColor(Color.parseColor("#81B64C"));
+                tvLine1.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ✓");
 
-                // Ход открывается только после завершения реального счёта
-                tvMove.setTextColor(Color.WHITE);
-                tvMove.setText(decision.moveText);
+                // Строка 2: Название и значок
+                tvLine2.setText(decision.pieceName + " " + decision.pieceIcon);
+                // Строка 3: Координаты
+                tvLine3.setText(decision.fromCoord + " → " + decision.toCoord);
+
                 moveCount++;
                 waitingForMyTurn = true;
             }
@@ -269,3 +291,4 @@ public class OverlayService extends Service {
         if (overlay != null) wm.removeView(overlay);
     }
 }
+
