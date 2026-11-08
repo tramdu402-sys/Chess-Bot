@@ -77,11 +77,12 @@ public final class BoardScanner {
         int sq = w / 8;
         int from = (int) (0.04f * h), to = h - 8 * sq;
         int runStart = -1, last = -1;
+        int gap = (int) (0.35f * sq);
         for (int y0 = from; y0 <= to; y0 += 2) {
             if (boardPattern(f, y0)) {
                 if (runStart < 0) runStart = y0;
                 last = y0;
-            } else if (runStart >= 0) {
+            } else if (runStart >= 0 && y0 - last > gap) {
                 break;
             }
         }
@@ -170,6 +171,42 @@ public final class BoardScanner {
             for (int row = 6; row <= 7; row++)
                 if (o.occ[row * 8 + col] && o.white[row * 8 + col]) bottomWhite++;
         return bottomWhite >= 8;
+    }
+
+    public static int trySyncAfterFirstMove(Obs o, ChessEngine engine) {
+        int bottomWhite = 0, topWhite = 0;
+        for (int col = 0; col < 8; col++) {
+            for (int row = 6; row <= 7; row++) if (o.occ[row * 8 + col] && o.white[row * 8 + col]) bottomWhite++;
+            for (int row = 0; row <= 1; row++) if (o.occ[row * 8 + col] && o.white[row * 8 + col]) topWhite++;
+        }
+        boolean whiteBottom;
+        if (bottomWhite >= 12 && topWhite <= 4) whiteBottom = true;
+        else if (bottomWhite <= 4 && topWhite >= 12) whiteBottom = false;
+        else return 0;
+
+        int bits = 0;
+        for (int i = 0; i < 64; i++) if (o.lit[i]) bits++;
+        if (bits < 2 || bits > 5) return 0;
+        int[] litSq = new int[bits];
+        int k = 0;
+        for (int i = 0; i < 64; i++) if (o.lit[i]) litSq[k++] = screenToSquare(i, whiteBottom);
+
+        engine.newGame();
+        int found = -1, count = 0;
+        for (int m : engine.candidates(litSq)) {
+            boolean fromEmpty = !o.occ[squareToScreen(Position.from(m), whiteBottom)];
+            boolean toOccupied = o.occ[squareToScreen(Position.to(m), whiteBottom)];
+            if (fromEmpty && toOccupied) { found = m; count++; }
+        }
+        if (count != 1) { engine.newGame(); return 0; }
+        engine.apply(found);
+        int mism = 0;
+        Position p = engine.position();
+        for (int s = 0; s < 64; s++) {
+            if ((p.b[s] != 0) != o.occ[squareToScreen(s, whiteBottom)]) mism++;
+        }
+        if (mism > 1) { engine.newGame(); return 0; }
+        return whiteBottom ? 1 : 2;
     }
 
     public static int screenToSquare(int screenIdx, boolean whiteAtBottom) {
