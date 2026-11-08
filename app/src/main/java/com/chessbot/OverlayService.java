@@ -27,14 +27,12 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.nio.ByteBuffer;
 
 public class OverlayService extends Service {
     private WindowManager wm;
-    private FrameLayout rootOverlay;
     private BoardHighlightView boardView;
     private LinearLayout pillView;
     private TextView tvStatus, tvPiece, tvCoords;
@@ -60,11 +58,11 @@ public class OverlayService extends Service {
                 TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
 
-    // Подсветка полей прямо на шахматной доске (20% прозрачности)
+    // Полноэкранный холст для подсветки клеток
     private static class BoardHighlightView extends View {
         private final Paint fromFill = new Paint();
         private final Paint toFill = new Paint();
-        private final Paint borderPaint = new Paint();
+        private final Paint strokePaint = new Paint();
 
         private int fC = -1, fR = -1, tC = -1, tR = -1;
         private int bTop = 0, sq = 0;
@@ -72,12 +70,13 @@ public class OverlayService extends Service {
 
         public BoardHighlightView(Context ctx) {
             super(ctx);
-            fromFill.setColor(Color.argb(55, 129, 182, 76)); // Зеленый 20%
-            toFill.setColor(Color.argb(65, 56, 189, 248));   // Лазурный 25%
+            // Полупрозрачность 20%
+            fromFill.setColor(Color.argb(55, 129, 182, 76));
+            toFill.setColor(Color.argb(65, 56, 189, 248));
 
-            borderPaint.setStyle(Paint.Style.STROKE);
-            borderPaint.setStrokeWidth(4.5f);
-            borderPaint.setColor(Color.argb(180, 129, 182, 76));
+            strokePaint.setStyle(Paint.Style.STROKE);
+            strokePaint.setStrokeWidth(4.5f);
+            strokePaint.setColor(Color.argb(180, 129, 182, 76));
         }
 
         public void setMove(int fC, int fR, int tC, int tR, int top, int size) {
@@ -99,18 +98,20 @@ public class OverlayService extends Service {
             super.onDraw(canvas);
             if (!active || sq <= 0) return;
 
+            // Подсветка поля "ОТКУДА"
             if (fC >= 0 && fR >= 0) {
                 float l = fC * sq;
                 float t = bTop + (fR * sq);
                 canvas.drawRect(l, t, l + sq, t + sq, fromFill);
-                canvas.drawRect(l + 2, t + 2, l + sq - 2, t + sq - 2, borderPaint);
+                canvas.drawRect(l + 2, t + 2, l + sq - 2, t + sq - 2, strokePaint);
             }
 
+            // Подсветка поля "КУДА"
             if (tC >= 0 && tR >= 0) {
                 float l = tC * sq;
                 float t = bTop + (tR * sq);
                 canvas.drawRect(l, t, l + sq, t + sq, toFill);
-                canvas.drawRect(l + 2, t + 2, l + sq - 2, t + sq - 2, borderPaint);
+                canvas.drawRect(l + 2, t + 2, l + sq - 2, t + sq - 2, strokePaint);
             }
         }
     }
@@ -144,12 +145,19 @@ public class OverlayService extends Service {
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         DisplayMetrics dm = getResources().getDisplayMetrics();
 
-        rootOverlay = new FrameLayout(this);
-
+        // 1. ОКНО ХОЛСТА: полностью прозрачно для кликов (FLAG_NOT_TOUCHABLE)
         boardView = new BoardHighlightView(this);
-        rootOverlay.addView(boardView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        WindowManager.LayoutParams boardParams = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE |
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT);
+        boardParams.gravity = Gravity.TOP | Gravity.START;
+        wm.addView(boardView, boardParams);
 
+        // 2. ОКНО КАПСУЛЫ: интерактивное компактное окно в углу
         pillView = new LinearLayout(this);
         pillView.setOrientation(LinearLayout.VERTICAL);
         pillView.setGravity(Gravity.CENTER);
@@ -168,7 +176,7 @@ public class OverlayService extends Service {
         tvStatus.setGravity(Gravity.CENTER);
         pillView.addView(tvStatus);
 
-        // Строка 2: Фигура со значком и белой обводкой для контраста
+        // Строка 2: Фигура и значок со светлой обводкой
         tvPiece = new TextView(this);
         tvPiece.setTextColor(Color.WHITE);
         tvPiece.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
@@ -178,7 +186,7 @@ public class OverlayService extends Service {
         tvPiece.setPadding(0, dp(2), 0, dp(2));
         pillView.addView(tvPiece);
 
-        // Строка 3: Координаты
+        // Строка 3: Координаты хода
         tvCoords = new TextView(this);
         tvCoords.setTextColor(Color.parseColor("#81B64C"));
         tvCoords.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
@@ -186,35 +194,55 @@ public class OverlayService extends Service {
         tvCoords.setGravity(Gravity.CENTER);
         pillView.addView(tvCoords);
 
-        FrameLayout.LayoutParams pillParams = new FrameLayout.LayoutParams(
-                (int) (dm.widthPixels * 0.44f), FrameLayout.LayoutParams.WRAP_CONTENT);
-        pillParams.gravity = Gravity.TOP | Gravity.END;
-        pillParams.setMargins(0, dp(60), dp(16), 0);
-        rootOverlay.addView(pillView, pillParams);
-
-        WindowManager.LayoutParams wmParams = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
+        final WindowManager.LayoutParams pillParams = new WindowManager.LayoutParams(
+                (int) (dm.widthPixels * 0.44f),
+                WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT);
 
-        pillView.setOnTouchListener((v, e) -> {
-            if (e.getAction() == MotionEvent.ACTION_UP) {
-                long now = System.currentTimeMillis();
-                if (now - lastTapTime < 350) {
-                    stopSelf();
-                } else {
-                    autoComputeMove(3, 4);
+        pillParams.gravity = Gravity.TOP | Gravity.END;
+        pillParams.x = dp(16);
+        pillParams.y = dp(70);
+
+        pillView.setOnTouchListener(new View.OnTouchListener() {
+            private int initX, initY;
+            private float tX, tY;
+            private boolean isDrag = false;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent e) {
+                switch (e.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        initX = pillParams.x; initY = pillParams.y;
+                        tX = e.getRawX(); tY = e.getRawY();
+                        isDrag = false;
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        if (Math.abs(e.getRawX() - tX) > 10 || Math.abs(e.getRawY() - tY) > 10) {
+                            isDrag = true;
+                            pillParams.x = initX - (int)(e.getRawX() - tX);
+                            pillParams.y = initY + (int)(e.getRawY() - tY);
+                            wm.updateViewLayout(pillView, pillParams);
+                        }
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        if (!isDrag) {
+                            long now = System.currentTimeMillis();
+                            if (now - lastTapTime < 350) {
+                                stopSelf(); // Двойной клик — закрыть суфлёр
+                            } else {
+                                autoComputeMove(3, 4); // Одиночный клик — пересчитать ход
+                            }
+                            lastTapTime = now;
+                        }
+                        return true;
                 }
-                lastTapTime = now;
-                return true;
+                return false;
             }
-            return true;
         });
 
-        wm.addView(rootOverlay, wmParams);
+        wm.addView(pillView, pillParams);
         tvStatus.setText("● ОЖИДАНИЕ");
         tvPiece.setText("—");
         tvCoords.setText("...");
@@ -329,7 +357,7 @@ public class OverlayService extends Service {
         ChessEngine.EngineMove move = engine.findMove(isMyColorWhite, targetC, targetR);
         long delayMs = (long) (move.delaySec * 1000);
 
-        // Если задержка минимальная (< 0.35s), ход выдается сразу же
+        // Если ответ очевидный (< 0.35с) — выводим ход моментально
         if (delayMs <= 350) {
             tvStatus.setTextColor(Color.parseColor("#81B64C"));
             tvStatus.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ✓");
@@ -387,7 +415,7 @@ public class OverlayService extends Service {
         if (virtualDisplay != null) virtualDisplay.release();
         if (mediaProjection != null) mediaProjection.stop();
         if (imageReader != null) imageReader.close();
-        if (rootOverlay != null) wm.removeView(rootOverlay);
+        if (boardView != null) wm.removeView(boardView);
+        if (pillView != null) wm.removeView(pillView);
     }
 }
-
