@@ -92,12 +92,14 @@ public class OverlayService extends Service {
         bg.setStroke(dp(1.2f), Color.parseColor("#81B64C"));
         overlay.setBackground(bg);
 
+        // Строка 1: Статус / Таймер
         tvLine1 = new TextView(this);
         tvLine1.setTextColor(Color.parseColor("#7D8B9B"));
         tvLine1.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         tvLine1.setGravity(Gravity.CENTER);
         overlay.addView(tvLine1);
 
+        // Строка 2: Фигура и иконка
         tvLine2 = new TextView(this);
         tvLine2.setTextColor(Color.WHITE);
         tvLine2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
@@ -106,6 +108,7 @@ public class OverlayService extends Service {
         tvLine2.setPadding(0, dp(1), 0, dp(1));
         overlay.addView(tvLine2);
 
+        // Строка 3: Координаты
         tvLine3 = new TextView(this);
         tvLine3.setTextColor(Color.parseColor("#81B64C"));
         tvLine3.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
@@ -148,7 +151,7 @@ public class OverlayService extends Service {
                         if (!isDrag) {
                             long now = System.currentTimeMillis();
                             if (now - lastTapTime < 350) {
-                                stopSelf(); // Двойной тап — мгновенное закрытие
+                                stopSelf(); // Двойной тап закрывает оверлей
                             }
                             lastTapTime = now;
                         }
@@ -200,35 +203,39 @@ public class OverlayService extends Service {
             int boardTop = (int) (h * 0.315f);
             int sqSize = w / 8;
 
-            // 1. Определение цвета игрока строго по фигурам внизу (ряд 7)
+            // 1. Определение цвета по нижней цифре доски (ряд 7, край слева)
             if (!colorDetected) {
-                int totalBrightness = 0;
-                int[] cols = {1, 2, 5, 6};
-                for (int c : cols) {
-                    int px = (int) ((c + 0.5f) * sqSize);
-                    int py = boardTop + (int) ((7 + 0.5f) * sqSize);
-                    int offset = (py * rStride) + (px * pStride);
-                    if (offset < buf.remaining() - 4) {
-                        int r = buf.get(offset) & 0xFF;
-                        int g = buf.get(offset + 1) & 0xFF;
-                        int b = buf.get(offset + 2) & 0xFF;
-                        totalBrightness += (r + g + b) / 3;
-                    }
-                }
-                // Если снизу стоят темные фигуры (яркость < 110) — значит играем черными
-                isMyColorWhite = (totalBrightness / cols.length > 115);
-                colorDetected = true;
+                // Координата цифры внизу доски: левый край 8-й горизонтали
+                int numY = boardTop + (int) (7.82f * sqSize);
+                int numX = (int) (0.05f * sqSize);
+                int offsetNum = (numY * rStride) + (numX * pStride);
 
-                if (isMyColorWhite) {
-                    myTurn = true;
-                    calculateNextMove();
-                    return;
-                } else {
-                    tvLine1.setText("ЧЁРНЫЕ ● ЖДЁМ ХОДА");
+                // Также берем контрольный цвет нижней фигуры
+                int figureY = boardTop + (int) (7.5f * sqSize);
+                int figureX = (int) (1.5f * sqSize);
+                int offsetFig = (figureY * rStride) + (figureX * pStride);
+
+                if (offsetFig < buf.remaining() - 4 && offsetNum < buf.remaining() - 4) {
+                    int r = buf.get(offsetFig) & 0xFF;
+                    int g = buf.get(offsetFig + 1) & 0xFF;
+                    int b = buf.get(offsetFig + 2) & 0xFF;
+                    int figureBrightness = (r + g + b) / 3;
+
+                    // Если снизу темные фигуры (яркость < 115) — снизу цифра 8, мы играем черными!
+                    isMyColorWhite = (figureBrightness > 115);
+                    colorDetected = true;
+
+                    if (isMyColorWhite) {
+                        myTurn = true;
+                        autoCalculateMove();
+                        return;
+                    } else {
+                        tvLine1.setText("ЧЁРНЫЕ ● ЖДЁМ ХОДА");
+                    }
                 }
             }
 
-            // 2. Распознавание хода соперника по желтой подсветке Chess.com
+            // 2. Распознавание хода соперника по желтой подсветке Chess.com (#F5F682)
             int highlightSignature = 0;
             int foundSquares = 0;
 
@@ -243,7 +250,6 @@ public class OverlayService extends Service {
                         int grn = buf.get(offset + 1) & 0xFF;
                         int blu = buf.get(offset + 2) & 0xFF;
 
-                        // Желто-зеленая клетка хода
                         if (red > 165 && grn > 175 && blu < 160 && (grn - blu) > 35) {
                             highlightSignature += (r * 8 + c) * (foundSquares == 0 ? 1 : 64);
                             foundSquares++;
@@ -252,15 +258,16 @@ public class OverlayService extends Service {
                 }
             }
 
+            // Когда на доске появляется новая подсветка хода соперника
             if (foundSquares >= 2 && highlightSignature != lastHighlightSignature) {
                 lastHighlightSignature = highlightSignature;
 
                 if (!myTurn) {
-                    // Соперник сходил -> бот САМ начинает отсчет хода
+                    // Соперник завершил ход -> бот САМ начинает обдумывание
                     myTurn = true;
-                    calculateNextMove();
+                    autoCalculateMove();
                 } else {
-                    // Мы сделали ход на доске -> бот переходит в режим ожидания
+                    // Мы сами сделали ход -> переключаемся в ожидание
                     myTurn = false;
                     tvLine1.setTextColor(Color.parseColor("#7D8B9B"));
                     tvLine1.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ● ЖДЁМ ХОДА");
@@ -274,7 +281,7 @@ public class OverlayService extends Service {
         }
     }
 
-    private void calculateNextMove() {
+    private void autoCalculateMove() {
         if (timer != null) timer.cancel();
 
         tvLine2.setText("•••");
@@ -296,7 +303,7 @@ public class OverlayService extends Service {
                 tvLine1.setTextColor(Color.parseColor("#81B64C"));
                 tvLine1.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ✓");
 
-                // Вывод в 3 строки: фигура со значком и клетки
+                // Вывод в 3 строки: фигура + иконка, затем координаты
                 tvLine2.setText(decision.pieceName + " " + decision.pieceIcon);
                 tvLine3.setText(decision.fromSquare + " → " + decision.toSquare);
             }
