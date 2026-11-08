@@ -32,7 +32,7 @@ import java.nio.ByteBuffer;
 public class OverlayService extends Service {
     private WindowManager wm;
     private LinearLayout overlay;
-    private TextView tvLine1, tvLine2, tvLine3;
+    private TextView tvStatus, tvPiece, tvCoords;
     private CountDownTimer timer;
     private MediaProjection mediaProjection;
     private VirtualDisplay virtualDisplay;
@@ -43,8 +43,8 @@ public class OverlayService extends Service {
     private ChessEngine engine;
     private boolean isMyColorWhite = false;
     private boolean colorDetected = false;
-    private boolean myTurn = false;
-    private int lastHighlightSignature = 0;
+    private boolean isThinking = false;
+    private int lastHighlightHash = 0;
     private long lastTapTime = 0;
 
     private int dp(float v) {
@@ -84,47 +84,46 @@ public class OverlayService extends Service {
         overlay = new LinearLayout(this);
         overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setGravity(Gravity.CENTER);
-        overlay.setPadding(dp(12), dp(8), dp(12), dp(8));
+        overlay.setPadding(dp(14), dp(8), dp(14), dp(8));
 
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#F40D1117"));
+        bg.setColor(Color.parseColor("#F705070A"));
         bg.setCornerRadius(dp(14));
-        bg.setStroke(dp(1.2f), Color.parseColor("#81B64C"));
+        bg.setStroke(dp(1), Color.parseColor("#81B64C"));
         overlay.setBackground(bg);
 
         // Строка 1: Статус / Таймер
-        tvLine1 = new TextView(this);
-        tvLine1.setTextColor(Color.parseColor("#7D8B9B"));
-        tvLine1.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        tvLine1.setGravity(Gravity.CENTER);
-        overlay.addView(tvLine1);
+        tvStatus = new TextView(this);
+        tvStatus.setTextColor(Color.parseColor("#6C7A8C"));
+        tvStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvStatus.setGravity(Gravity.CENTER);
+        overlay.addView(tvStatus);
 
-        // Строка 2: Фигура и иконка
-        tvLine2 = new TextView(this);
-        tvLine2.setTextColor(Color.WHITE);
-        tvLine2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        tvLine2.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvLine2.setGravity(Gravity.CENTER);
-        tvLine2.setPadding(0, dp(1), 0, dp(1));
-        overlay.addView(tvLine2);
+        // Строка 2: Фигура со значком
+        tvPiece = new TextView(this);
+        tvPiece.setTextColor(Color.WHITE);
+        tvPiece.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tvPiece.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvPiece.setGravity(Gravity.CENTER);
+        overlay.addView(tvPiece);
 
-        // Строка 3: Координаты
-        tvLine3 = new TextView(this);
-        tvLine3.setTextColor(Color.parseColor("#81B64C"));
-        tvLine3.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        tvLine3.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvLine3.setGravity(Gravity.CENTER);
-        overlay.addView(tvLine3);
+        // Строка 3: Координаты хода
+        tvCoords = new TextView(this);
+        tvCoords.setTextColor(Color.parseColor("#81B64C"));
+        tvCoords.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tvCoords.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvCoords.setGravity(Gravity.CENTER);
+        overlay.addView(tvCoords);
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                (int) (dm.widthPixels * 0.44f), WindowManager.LayoutParams.WRAP_CONTENT,
+                (int) (dm.widthPixels * 0.40f), WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT);
 
         params.gravity = Gravity.TOP | Gravity.END;
         params.x = dp(16);
-        params.y = dp(70);
+        params.y = dp(75);
 
         overlay.setOnTouchListener(new View.OnTouchListener() {
             private int initX, initY;
@@ -151,7 +150,9 @@ public class OverlayService extends Service {
                         if (!isDrag) {
                             long now = System.currentTimeMillis();
                             if (now - lastTapTime < 350) {
-                                stopSelf(); // Двойной тап закрывает оверлей
+                                stopSelf(); // Двойной тап — мгновенное закрытие
+                            } else {
+                                calculateAndShowMove(); // Одиночный тап — принудительный ход
                             }
                             lastTapTime = now;
                         }
@@ -162,33 +163,33 @@ public class OverlayService extends Service {
         });
 
         wm.addView(overlay, params);
-        tvLine1.setText("● ОЖИДАНИЕ ХОДА");
-        tvLine2.setText("—");
-        tvLine3.setText("...");
+        tvStatus.setText("● СКАНИРОВАНИЕ");
+        tvPiece.setText("—");
+        tvCoords.setText("...");
     }
 
     private void setupScreenCapture() {
         DisplayMetrics dm = getResources().getDisplayMetrics();
         imageReader = ImageReader.newInstance(dm.widthPixels, dm.heightPixels, PixelFormat.RGBA_8888, 2);
 
-        virtualDisplay = mediaProjection.createVirtualDisplay("LiveScanner",
+        virtualDisplay = mediaProjection.createVirtualDisplay("BoardReader",
                 dm.widthPixels, dm.heightPixels, dm.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader.getSurface(), null, null);
 
-        handler.postDelayed(scanLoop, 400);
+        handler.postDelayed(scanLoop, 350);
     }
 
     private final Runnable scanLoop = new Runnable() {
         @Override
         public void run() {
-            processBoard();
-            handler.postDelayed(this, 500);
+            scanScreen();
+            handler.postDelayed(this, 400);
         }
     };
 
-    private void processBoard() {
-        if (imageReader == null) return;
+    private void scanScreen() {
+        if (imageReader == null || isThinking) return;
         Image img = imageReader.acquireLatestImage();
         if (img == null) return;
 
@@ -200,80 +201,63 @@ public class OverlayService extends Service {
             int pStride = plane.getPixelStride();
             int rStride = plane.getRowStride();
 
-            int boardTop = (int) (h * 0.315f);
-            int sqSize = w / 8;
+            // Динамический поиск доски: квадрат посередине экрана
+            int boardSize = w;
+            int boardTop = (h - boardSize) / 2;
+            int sqSize = boardSize / 8;
 
-            // 1. Определение цвета по нижней цифре доски (ряд 7, край слева)
+            // 1. Определение цвета игрока по фигурам на нижнем ряду (7-я горизонталь экрана)
             if (!colorDetected) {
-                // Координата цифры внизу доски: левый край 8-й горизонтали
-                int numY = boardTop + (int) (7.82f * sqSize);
-                int numX = (int) (0.05f * sqSize);
-                int offsetNum = (numY * rStride) + (numX * pStride);
-
-                // Также берем контрольный цвет нижней фигуры
-                int figureY = boardTop + (int) (7.5f * sqSize);
-                int figureX = (int) (1.5f * sqSize);
-                int offsetFig = (figureY * rStride) + (figureX * pStride);
-
-                if (offsetFig < buf.remaining() - 4 && offsetNum < buf.remaining() - 4) {
-                    int r = buf.get(offsetFig) & 0xFF;
-                    int g = buf.get(offsetFig + 1) & 0xFF;
-                    int b = buf.get(offsetFig + 2) & 0xFF;
-                    int figureBrightness = (r + g + b) / 3;
-
-                    // Если снизу темные фигуры (яркость < 115) — снизу цифра 8, мы играем черными!
-                    isMyColorWhite = (figureBrightness > 115);
-                    colorDetected = true;
-
-                    if (isMyColorWhite) {
-                        myTurn = true;
-                        autoCalculateMove();
-                        return;
-                    } else {
-                        tvLine1.setText("ЧЁРНЫЕ ● ЖДЁМ ХОДА");
+                int totalBrightness = 0;
+                int samples = 0;
+                for (int c = 1; c <= 6; c++) {
+                    int px = c * sqSize + (sqSize / 2);
+                    int py = boardTop + (int)(7.5f * sqSize);
+                    int off = (py * rStride) + (px * pStride);
+                    if (off < buf.remaining() - 4) {
+                        int r = buf.get(off) & 0xFF;
+                        int g = buf.get(off + 1) & 0xFF;
+                        int b = buf.get(off + 2) & 0xFF;
+                        totalBrightness += (r + g + b) / 3;
+                        samples++;
                     }
+                }
+                if (samples > 0) {
+                    // У чёрных фигур средняя яркость меньше 105
+                    isMyColorWhite = (totalBrightness / samples) > 115;
+                    colorDetected = true;
+                    tvStatus.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ● ЖДЁМ");
                 }
             }
 
-            // 2. Распознавание хода соперника по желтой подсветке Chess.com (#F5F682)
-            int highlightSignature = 0;
-            int foundSquares = 0;
+            // 2. Детектор желтой подсветки хода Chess.com (клетки с высоким R и G, но низким B)
+            int highlightHash = 0;
+            int litSquares = 0;
 
             for (int r = 0; r < 8; r++) {
                 for (int c = 0; c < 8; c++) {
-                    int px = c * sqSize + (int)(sqSize * 0.12f);
-                    int py = boardTop + r * sqSize + (int)(sqSize * 0.12f);
-                    int offset = (py * rStride) + (px * pStride);
+                    int px = c * sqSize + (int)(sqSize * 0.15f);
+                    int py = boardTop + r * sqSize + (int)(sqSize * 0.15f);
+                    int off = (py * rStride) + (px * pStride);
 
-                    if (offset < buf.remaining() - 4) {
-                        int red = buf.get(offset) & 0xFF;
-                        int grn = buf.get(offset + 1) & 0xFF;
-                        int blu = buf.get(offset + 2) & 0xFF;
+                    if (off < buf.remaining() - 4) {
+                        int red = buf.get(off) & 0xFF;
+                        int grn = buf.get(off + 1) & 0xFF;
+                        int blu = buf.get(off + 2) & 0xFF;
 
-                        if (red > 165 && grn > 175 && blu < 160 && (grn - blu) > 35) {
-                            highlightSignature += (r * 8 + c) * (foundSquares == 0 ? 1 : 64);
-                            foundSquares++;
+                        // Желто-зеленая подсветка сделанного хода
+                        if (red > 170 && grn > 175 && blu < 155 && (red - blu > 30)) {
+                            highlightHash += (r * 8 + c) * 31;
+                            litSquares++;
                         }
                     }
                 }
             }
 
-            // Когда на доске появляется новая подсветка хода соперника
-            if (foundSquares >= 2 && highlightSignature != lastHighlightSignature) {
-                lastHighlightSignature = highlightSignature;
-
-                if (!myTurn) {
-                    // Соперник завершил ход -> бот САМ начинает обдумывание
-                    myTurn = true;
-                    autoCalculateMove();
-                } else {
-                    // Мы сами сделали ход -> переключаемся в ожидание
-                    myTurn = false;
-                    tvLine1.setTextColor(Color.parseColor("#7D8B9B"));
-                    tvLine1.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ● ЖДЁМ ХОДА");
-                    tvLine2.setText("—");
-                    tvLine3.setText("...");
-                }
+            // Если замечена новая подсветка хода соперника
+            if (litSquares >= 2 && highlightHash != lastHighlightHash) {
+                lastHighlightHash = highlightHash;
+                calculateAndShowMove();
             }
         } catch (Exception ignored) {
         } finally {
@@ -281,46 +265,48 @@ public class OverlayService extends Service {
         }
     }
 
-    private void autoCalculateMove() {
+    private void calculateAndShowMove() {
         if (timer != null) timer.cancel();
+        isThinking = true;
 
-        tvLine2.setText("•••");
-        tvLine3.setText("...");
+        tvPiece.setText("•••");
+        tvCoords.setText("...");
 
         ChessEngine.MoveDecision decision = engine.getNextMove(isMyColorWhite);
         long delayMs = (long) (decision.thinkingSeconds * 1000);
 
-        timer = new CountDownTimer(delayMs, 30) {
+        timer = new CountDownTimer(delayMs, 40) {
             @Override
             public void onTick(long millisLeft) {
-                float sec = millisLeft / 1000f;
-                tvLine1.setTextColor(Color.parseColor("#E5A93C"));
-                tvLine1.setText(String.format("⏳  %.2f сек", sec));
+                tvStatus.setTextColor(Color.parseColor("#E5A93C"));
+                tvStatus.setText(String.format("⏳ %.1fс", millisLeft / 1000f));
             }
 
             @Override
             public void onFinish() {
-                tvLine1.setTextColor(Color.parseColor("#81B64C"));
-                tvLine1.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ✓");
+                isThinking = false;
+                tvStatus.setTextColor(Color.parseColor("#81B64C"));
+                tvStatus.setText(isMyColorWhite ? "БЕЛЫЕ ✓" : "ЧЁРНЫЕ ✓");
 
-                // Вывод в 3 строки: фигура + иконка, затем координаты
-                tvLine2.setText(decision.pieceName + " " + decision.pieceIcon);
-                tvLine3.setText(decision.fromSquare + " → " + decision.toSquare);
+                // Строка 2: Фигура со значком
+                tvPiece.setText(decision.pieceName + " " + decision.pieceIcon);
+                // Строка 3: Координаты
+                tvCoords.setText(decision.fromSquare + " → " + decision.toSquare);
             }
         }.start();
     }
 
     private void createNotificationChannel() {
-        NotificationChannel channel = new NotificationChannel(
-                "chess_bot_svc", "Chess Assistant Service", NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel ch = new NotificationChannel(
+                "chess_bot_svc", "Assistant", NotificationManager.IMPORTANCE_LOW);
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (nm != null) nm.createNotificationChannel(channel);
+        if (nm != null) nm.createNotificationChannel(ch);
     }
 
     private Notification buildNotification() {
         return new Notification.Builder(this, "chess_bot_svc")
                 .setContentTitle("Chess Assistant")
-                .setContentText("Авто-суфлер активен")
+                .setContentText("Активен")
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
                 .build();
     }
