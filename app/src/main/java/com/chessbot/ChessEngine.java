@@ -1,14 +1,11 @@
 package com.chessbot;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Random;
 
 public class ChessEngine {
     private final int elo;
-    private int currentMoveIndex = 0;
+    private int step = 0;
     private final Random rng = new Random();
-    private final List<String> playedHistory = new ArrayList<>();
 
     public static class MoveDecision {
         public final String pieceName;
@@ -30,67 +27,58 @@ public class ChessEngine {
         this.elo = elo;
     }
 
-    // Линейка ходов за Чёрных (Сицилианская защита / Найдорф)
-    private static final String[][] BLACK_REPERTOIRE = {
-        {"Пешка", "♟", "c7", "c5"},
-        {"Пешка", "♟", "d7", "d6"},
+    // Линейка ходов за Чёрных (Защита против 1.e4: e7-e5, Конь f6, Слон c5...)
+    private static final String[][] BLACK_TREE = {
+        {"Пешка", "♟", "e7", "e5"},
         {"Конь", "♞", "g8", "f6"},
-        {"Пешка", "♟", "a7", "a6"},
-        {"Пешка", "♟", "e7", "e6"},
-        {"Слон", "♝", "f8", "e7"},
-        {"Король", "♚", "e8", "g8"},
+        {"Слон", "♝", "f8", "c5"},
         {"Конь", "♞", "b8", "c6"},
-        {"Ферзь", "♛", "d8", "c7"},
-        {"Ладья", "♜", "f8", "d8"},
-        {"Слон", "♝", "c8", "d7"}
+        {"Пешка", "♟", "d7", "d6"},
+        {"Король", "♚", "e8", "g8"},
+        {"Слон", "♝", "c8", "g4"},
+        {"Ферзь", "♛", "d8", "e7"}
     };
 
-    // Линейка ходов за Белых (Итальянская партия)
-    private static final String[][] WHITE_REPERTOIRE = {
+    // Линейка ходов за Белых (1.e4, Конь f3, Слон c4...)
+    private static final String[][] WHITE_TREE = {
         {"Пешка", "♙", "e2", "e4"},
         {"Конь", "♘", "g1", "f3"},
         {"Слон", "♗", "f1", "c4"},
         {"Пешка", "♙", "d2", "d3"},
         {"Король", "♔", "e1", "g1"},
         {"Конь", "♘", "b1", "c3"},
-        {"Пешка", "♙", "a2", "a4"},
-        {"Слон", "♗", "c1", "e3"}
+        {"Слон", "♗", "c1", "e3"},
+        {"Ферзь", "♕", "d1", "d2"}
     };
 
-    private float calculateHumanThinkingTime(int moveNum) {
+    private float getHumanDelay(int moveNum) {
         float base;
-        if (moveNum <= 3) {
-            // Начало: быстрый уверенный ответ (1.8 - 2.6 сек)
-            base = 1.8f + (rng.nextFloat() * 0.8f);
-        } else if (moveNum <= 8) {
-            // Развитие: среднее время (2.8 - 4.2 сек)
-            base = 2.8f + (rng.nextFloat() * 1.4f);
+        if (moveNum <= 2) {
+            base = 1.4f + (rng.nextFloat() * 0.8f);
+        } else if (moveNum <= 6) {
+            base = 2.2f + (rng.nextFloat() * 1.4f);
         } else {
-            // Миттельшпиль: время зависит от выбранного ELO
             float eloFactor = Math.max(0.7f, 1.9f - (elo / 2100f));
-            base = (3.2f * eloFactor) + (rng.nextFloat() * 2.8f);
+            base = (2.8f * eloFactor) + (rng.nextFloat() * 2.2f);
         }
-        float jitter = (rng.nextFloat() * 0.4f) - 0.2f;
-        return Math.max(1.3f, Math.round((base + jitter) * 100f) / 100f);
+        return Math.max(1.2f, Math.round(base * 10f) / 10f);
     }
 
     public MoveDecision getNextMove(boolean isWhite) {
-        String[][] repertoire = isWhite ? WHITE_REPERTOIRE : BLACK_REPERTOIRE;
-        String[] moveData;
+        String[][] tree = isWhite ? WHITE_TREE : BLACK_TREE;
+        String[] m;
 
-        if (currentMoveIndex < repertoire.length) {
-            moveData = repertoire[currentMoveIndex];
+        if (step < tree.length) {
+            m = tree[step];
         } else {
-            String[] pieces = isWhite ? new String[]{"Конь", "Слон", "Ладья", "Ферзь"} : new String[]{"Конь", "Слон", "Ладья", "Ферзь"};
-            String[] icons = isWhite ? new String[]{"♘", "♗", "♖", "♕"} : new String[]{"♞", "♝", "♜", "♛"};
-            int pick = rng.nextInt(pieces.length);
-            moveData = new String[]{pieces[pick], icons[pick], isWhite ? "f3" : "f6", isWhite ? "e5" : "e4"};
+            String[] p = isWhite ? new String[]{"Конь", "Слон", "Ладья"} : new String[]{"Конь", "♝", "♜"};
+            String[] ic = isWhite ? new String[]{"♘", "♗", "♖"} : new String[]{"♞", "♝", "♜"};
+            int idx = rng.nextInt(p.length);
+            m = new String[]{p[idx], ic[idx], isWhite ? "f3" : "f6", isWhite ? "e5" : "e4"};
         }
 
-        float delay = calculateHumanThinkingTime(currentMoveIndex);
-        playedHistory.add(moveData[2] + "-" + moveData[3]);
-        currentMoveIndex++;
-
-        return new MoveDecision(moveData[0], moveData[1], moveData[2], moveData[3], delay);
+        float delay = getHumanDelay(step);
+        step++;
+        return new MoveDecision(m[0], m[1], m[2], m[3], delay);
     }
 }
