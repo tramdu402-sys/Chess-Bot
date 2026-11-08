@@ -7,19 +7,26 @@ public class ChessEngine {
     private int step = 0;
     private final Random rng = new Random();
 
-    public static class MoveDecision {
+    public static class EngineMove {
         public final String pieceName;
         public final String pieceIcon;
-        public final String fromSquare;
-        public final String toSquare;
-        public final float thinkingSeconds;
+        public final String fromCoord;
+        public final String toCoord;
+        public final int fromCol, fromRow;
+        public final int toCol, toRow;
+        public final float delaySec;
 
-        public MoveDecision(String pieceName, String pieceIcon, String fromSquare, String toSquare, float thinkingSeconds) {
+        public EngineMove(String pieceName, String pieceIcon, String fromCoord, String toCoord,
+                          int fC, int fR, int tC, int tR, float delaySec) {
             this.pieceName = pieceName;
             this.pieceIcon = pieceIcon;
-            this.fromSquare = fromSquare;
-            this.toSquare = toSquare;
-            this.thinkingSeconds = thinkingSeconds;
+            this.fromCoord = fromCoord;
+            this.toCoord = toCoord;
+            this.fromCol = fC;
+            this.fromRow = fR;
+            this.toCol = tC;
+            this.toRow = tR;
+            this.delaySec = delaySec;
         }
     }
 
@@ -27,58 +34,48 @@ public class ChessEngine {
         this.elo = elo;
     }
 
-    // Линейка ходов за Чёрных (Защита против 1.e4: e7-e5, Конь f6, Слон c5...)
-    private static final String[][] BLACK_TREE = {
-        {"Пешка", "♟", "e7", "e5"},
-        {"Конь", "♞", "g8", "f6"},
-        {"Слон", "♝", "f8", "c5"},
-        {"Конь", "♞", "b8", "c6"},
-        {"Пешка", "♟", "d7", "d6"},
-        {"Король", "♚", "e8", "g8"},
-        {"Слон", "♝", "c8", "g4"},
-        {"Ферзь", "♛", "d8", "e7"}
-    };
-
-    // Линейка ходов за Белых (1.e4, Конь f3, Слон c4...)
-    private static final String[][] WHITE_TREE = {
-        {"Пешка", "♙", "e2", "e4"},
-        {"Конь", "♘", "g1", "f3"},
-        {"Слон", "♗", "f1", "c4"},
-        {"Пешка", "♙", "d2", "d3"},
-        {"Король", "♔", "e1", "g1"},
-        {"Конь", "♘", "b1", "c3"},
-        {"Слон", "♗", "c1", "e3"},
-        {"Ферзь", "♕", "d1", "d2"}
-    };
-
-    private float getHumanDelay(int moveNum) {
-        float base;
-        if (moveNum <= 2) {
-            base = 1.4f + (rng.nextFloat() * 0.8f);
-        } else if (moveNum <= 6) {
-            base = 2.2f + (rng.nextFloat() * 1.4f);
-        } else {
-            float eloFactor = Math.max(0.7f, 1.9f - (elo / 2100f));
-            base = (2.8f * eloFactor) + (rng.nextFloat() * 2.2f);
+    // Расчет задержки: мгновенно для очевидных ответов, умеренно для остальных
+    private float getThinkingDelay(boolean isInstant) {
+        if (isInstant) {
+            // Моментальная выдача ответа: 0.15 - 0.3 секунды
+            return 0.15f + (rng.nextFloat() * 0.15f);
         }
-        return Math.max(1.2f, Math.round(base * 10f) / 10f);
+        // Быстрое позиционное решение: 0.7 - 1.2 секунды (вместо прежних 3-4 секунд)
+        return 0.7f + (rng.nextFloat() * 0.5f);
     }
 
-    public MoveDecision getNextMove(boolean isWhite) {
-        String[][] tree = isWhite ? WHITE_TREE : BLACK_TREE;
-        String[] m;
+    public EngineMove findMove(boolean isWhite, int enemyCol, int enemyRow) {
+        step++;
 
-        if (step < tree.length) {
-            m = tree[step];
-        } else {
-            String[] p = isWhite ? new String[]{"Конь", "Слон", "Ладья"} : new String[]{"Конь", "♝", "♜"};
-            String[] ic = isWhite ? new String[]{"♘", "♗", "♖"} : new String[]{"♞", "♝", "♜"};
-            int idx = rng.nextInt(p.length);
-            m = new String[]{p[idx], ic[idx], isWhite ? "f3" : "f6", isWhite ? "e5" : "e4"};
+        // 1. ОЧЕВИДНОЕ ВЗЯТИЕ: противник вторгся пешкой на c7 к нашему ферзю -> МОМЕНТАЛЬНО рубим ферзем!
+        if (!isWhite && enemyRow >= 6) {
+            return new EngineMove("Ферзь", "♛", "d8", "c7", 4, 7, enemyCol, enemyRow, getThinkingDelay(true));
         }
 
-        float delay = getHumanDelay(step);
-        step++;
-        return new MoveDecision(m[0], m[1], m[2], m[3], delay);
+        // 2. ОПАСНОСТЬ: связка слоном Bg5 -> моментальный сгон пешкой h7-h6 без зависаний
+        if (!isWhite && (enemyCol == 1 && enemyRow == 4 || step >= 7)) {
+            return new EngineMove("Пешка", "♟", "h7", "h6", 0, 6, 0, 5, getThinkingDelay(true));
+        }
+
+        // 3. Быстрое дебютное развитие (первые ходы даются сразу за 0.2-0.3 сек)
+        if (!isWhite) {
+            switch (step) {
+                case 1: return new EngineMove("Пешка", "♟", "e7", "e5", 3, 6, 3, 4, getThinkingDelay(true));
+                case 2: return new EngineMove("Конь", "♞", "g8", "f6", 1, 7, 2, 5, getThinkingDelay(true));
+                case 3: return new EngineMove("Конь", "♞", "b8", "c6", 6, 7, 5, 5, getThinkingDelay(false));
+                case 4: return new EngineMove("Слон", "♝", "f8", "c5", 2, 7, 5, 4, getThinkingDelay(false));
+                case 5: return new EngineMove("Король", "♚", "0-0", "0-0", 4, 7, 6, 7, getThinkingDelay(true));
+                case 6: return new EngineMove("Пешка", "♟", "d7", "d6", 4, 6, 4, 5, getThinkingDelay(false));
+                default: return new EngineMove("Ладья", "♜", "f8", "e8", 2, 7, 3, 7, getThinkingDelay(false));
+            }
+        } else {
+            switch (step) {
+                case 1: return new EngineMove("Пешка", "♙", "e2", "e4", 4, 6, 4, 4, getThinkingDelay(true));
+                case 2: return new EngineMove("Конь", "♘", "g1", "f3", 6, 7, 5, 5, getThinkingDelay(true));
+                case 3: return new EngineMove("Слон", "♗", "f1", "c4", 5, 7, 2, 4, getThinkingDelay(false));
+                default: return new EngineMove("Король", "♔", "0-0", "0-0", 4, 7, 6, 7, getThinkingDelay(true));
+            }
+        }
     }
 }
+
