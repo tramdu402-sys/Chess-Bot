@@ -40,11 +40,12 @@ public class OverlayService extends Service {
     private Handler handler = new Handler(Looper.getMainLooper());
 
     private int elo = 1500;
-    private int moveCount = 1;
-    private boolean isMyColorWhite = true;
-    private boolean waitingForMyTurn = true;
+    private ChessEngine engine;
+    private boolean isMyColorWhite = false;
+    private boolean colorDetected = false;
+    private boolean myTurn = false;
+    private int lastHighlightSignature = 0;
     private long lastTapTime = 0;
-    private int lastHighlightHash = 0;
 
     private int dp(float v) {
         return (int) TypedValue.applyDimension(
@@ -58,9 +59,10 @@ public class OverlayService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null) {
             elo = intent.getIntExtra("ELO", 1500);
+            engine = new ChessEngine(elo);
+
             int code = intent.getIntExtra("RESULT_CODE", -1);
             Intent data = intent.getParcelableExtra("DATA");
-
             if (code != -1 && data != null && mediaProjection == null) {
                 MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
                 mediaProjection = mpm.getMediaProjection(code, data);
@@ -74,7 +76,7 @@ public class OverlayService extends Service {
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
-        startForeground(1, buildForegroundNotification());
+        startForeground(1, buildNotification());
 
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         DisplayMetrics dm = getResources().getDisplayMetrics();
@@ -84,21 +86,18 @@ public class OverlayService extends Service {
         overlay.setGravity(Gravity.CENTER);
         overlay.setPadding(dp(12), dp(8), dp(12), dp(8));
 
-        // AMOLED-капсула со скруглением и окантовкой
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(Color.parseColor("#F40D1117"));
         bg.setCornerRadius(dp(14));
         bg.setStroke(dp(1.2f), Color.parseColor("#81B64C"));
         overlay.setBackground(bg);
 
-        // Строка 1: Статус / Таймер
         tvLine1 = new TextView(this);
         tvLine1.setTextColor(Color.parseColor("#7D8B9B"));
         tvLine1.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         tvLine1.setGravity(Gravity.CENTER);
         overlay.addView(tvLine1);
 
-        // Строка 2: Фигура и крупный значок
         tvLine2 = new TextView(this);
         tvLine2.setTextColor(Color.WHITE);
         tvLine2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
@@ -107,7 +106,6 @@ public class OverlayService extends Service {
         tvLine2.setPadding(0, dp(1), 0, dp(1));
         overlay.addView(tvLine2);
 
-        // Строка 3: Координаты хода
         tvLine3 = new TextView(this);
         tvLine3.setTextColor(Color.parseColor("#81B64C"));
         tvLine3.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
@@ -116,7 +114,7 @@ public class OverlayService extends Service {
         overlay.addView(tvLine3);
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                (int) (dm.widthPixels * 0.42f), WindowManager.LayoutParams.WRAP_CONTENT,
+                (int) (dm.widthPixels * 0.44f), WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT);
@@ -150,9 +148,7 @@ public class OverlayService extends Service {
                         if (!isDrag) {
                             long now = System.currentTimeMillis();
                             if (now - lastTapTime < 350) {
-                                stopSelf(); // Двойной тап — закрытие
-                            } else {
-                                startEvaluationCycle(); // Одиночный тап — пересчет
+                                stopSelf(); // Двойной тап — мгновенное закрытие
                             }
                             lastTapTime = now;
                         }
@@ -172,23 +168,23 @@ public class OverlayService extends Service {
         DisplayMetrics dm = getResources().getDisplayMetrics();
         imageReader = ImageReader.newInstance(dm.widthPixels, dm.heightPixels, PixelFormat.RGBA_8888, 2);
 
-        virtualDisplay = mediaProjection.createVirtualDisplay("ChessScanner",
+        virtualDisplay = mediaProjection.createVirtualDisplay("LiveScanner",
                 dm.widthPixels, dm.heightPixels, dm.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader.getSurface(), null, null);
 
-        handler.postDelayed(scanRunnable, 500);
+        handler.postDelayed(scanLoop, 400);
     }
 
-    private final Runnable scanRunnable = new Runnable() {
+    private final Runnable scanLoop = new Runnable() {
         @Override
         public void run() {
-            scanBoardState();
-            handler.postDelayed(this, 600);
+            processBoard();
+            handler.postDelayed(this, 500);
         }
     };
 
-    private void scanBoardState() {
+    private void processBoard() {
         if (imageReader == null) return;
         Image img = imageReader.acquireLatestImage();
         if (img == null) return;
@@ -196,33 +192,80 @@ public class OverlayService extends Service {
         try {
             Image.Plane plane = img.getPlanes()[0];
             ByteBuffer buf = plane.getBuffer();
-            int width = img.getWidth();
-            int height = img.getHeight();
+            int w = img.getWidth();
+            int h = img.getHeight();
             int pStride = plane.getPixelStride();
             int rStride = plane.getRowStride();
 
-            // Сканируем строго низ экрана (72% высоты), где стоят наши основные фигуры
-            int bottomAreaY = (int) (height * 0.72f);
-            int sampleX = width / 2;
-            int offset = (bottomAreaY * rStride) + (sampleX * pStride);
+            int boardTop = (int) (h * 0.315f);
+            int sqSize = w / 8;
 
-            if (offset < buf.remaining() - 4) {
-                int r = buf.get(offset) & 0xFF;
-                int g = buf.get(offset + 1) & 0xFF;
-                int b = buf.get(offset + 2) & 0xFF;
+            // 1. Определение цвета игрока строго по фигурам внизу (ряд 7)
+            if (!colorDetected) {
+                int totalBrightness = 0;
+                int[] cols = {1, 2, 5, 6};
+                for (int c : cols) {
+                    int px = (int) ((c + 0.5f) * sqSize);
+                    int py = boardTop + (int) ((7 + 0.5f) * sqSize);
+                    int offset = (py * rStride) + (px * pStride);
+                    if (offset < buf.remaining() - 4) {
+                        int r = buf.get(offset) & 0xFF;
+                        int g = buf.get(offset + 1) & 0xFF;
+                        int b = buf.get(offset + 2) & 0xFF;
+                        totalBrightness += (r + g + b) / 3;
+                    }
+                }
+                // Если снизу стоят темные фигуры (яркость < 110) — значит играем черными
+                isMyColorWhite = (totalBrightness / cols.length > 115);
+                colorDetected = true;
 
-                // Если снизу фигуры белые (светлые пиксели) — мы играем белыми, иначе чёрными
-                int brightness = (r + g + b) / 3;
-                isMyColorWhite = (brightness > 120);
+                if (isMyColorWhite) {
+                    myTurn = true;
+                    calculateNextMove();
+                    return;
+                } else {
+                    tvLine1.setText("ЧЁРНЫЕ ● ЖДЁМ ХОДА");
+                }
+            }
 
-                // Поиск желтой подсветки хода Chess.com (#F5F682)
-                boolean isYellowHighlight = (r > 185 && g > 185 && b < 140);
-                int currentHash = (isYellowHighlight ? 1 : 0) + (r * 10) + g;
+            // 2. Распознавание хода соперника по желтой подсветке Chess.com
+            int highlightSignature = 0;
+            int foundSquares = 0;
 
-                if (isYellowHighlight && (currentHash != lastHighlightHash) && waitingForMyTurn) {
-                    lastHighlightHash = currentHash;
-                    waitingForMyTurn = false;
-                    startEvaluationCycle();
+            for (int r = 0; r < 8; r++) {
+                for (int c = 0; c < 8; c++) {
+                    int px = c * sqSize + (int)(sqSize * 0.12f);
+                    int py = boardTop + r * sqSize + (int)(sqSize * 0.12f);
+                    int offset = (py * rStride) + (px * pStride);
+
+                    if (offset < buf.remaining() - 4) {
+                        int red = buf.get(offset) & 0xFF;
+                        int grn = buf.get(offset + 1) & 0xFF;
+                        int blu = buf.get(offset + 2) & 0xFF;
+
+                        // Желто-зеленая клетка хода
+                        if (red > 165 && grn > 175 && blu < 160 && (grn - blu) > 35) {
+                            highlightSignature += (r * 8 + c) * (foundSquares == 0 ? 1 : 64);
+                            foundSquares++;
+                        }
+                    }
+                }
+            }
+
+            if (foundSquares >= 2 && highlightSignature != lastHighlightSignature) {
+                lastHighlightSignature = highlightSignature;
+
+                if (!myTurn) {
+                    // Соперник сходил -> бот САМ начинает отсчет хода
+                    myTurn = true;
+                    calculateNextMove();
+                } else {
+                    // Мы сделали ход на доске -> бот переходит в режим ожидания
+                    myTurn = false;
+                    tvLine1.setTextColor(Color.parseColor("#7D8B9B"));
+                    tvLine1.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ● ЖДЁМ ХОДА");
+                    tvLine2.setText("—");
+                    tvLine3.setText("...");
                 }
             }
         } catch (Exception ignored) {
@@ -231,22 +274,21 @@ public class OverlayService extends Service {
         }
     }
 
-    private void startEvaluationCycle() {
+    private void calculateNextMove() {
         if (timer != null) timer.cancel();
 
         tvLine2.setText("•••");
         tvLine3.setText("...");
 
-        // Получаем ход с расчетом фигуры и тайминга
-        ChessEngine.MoveDecision decision = ChessEngine.getBestMove(!isMyColorWhite, moveCount, elo);
-        long durationMs = (long) (decision.delaySeconds * 1000);
+        ChessEngine.MoveDecision decision = engine.getNextMove(isMyColorWhite);
+        long delayMs = (long) (decision.thinkingSeconds * 1000);
 
-        timer = new CountDownTimer(durationMs, 30) {
+        timer = new CountDownTimer(delayMs, 30) {
             @Override
             public void onTick(long millisLeft) {
                 float sec = millisLeft / 1000f;
                 tvLine1.setTextColor(Color.parseColor("#E5A93C"));
-                tvLine1.setText(String.format("⏳ %.2f сек", sec));
+                tvLine1.setText(String.format("⏳  %.2f сек", sec));
             }
 
             @Override
@@ -254,13 +296,9 @@ public class OverlayService extends Service {
                 tvLine1.setTextColor(Color.parseColor("#81B64C"));
                 tvLine1.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ✓");
 
-                // Строка 2: Название и значок
+                // Вывод в 3 строки: фигура со значком и клетки
                 tvLine2.setText(decision.pieceName + " " + decision.pieceIcon);
-                // Строка 3: Координаты
-                tvLine3.setText(decision.fromCoord + " → " + decision.toCoord);
-
-                moveCount++;
-                waitingForMyTurn = true;
+                tvLine3.setText(decision.fromSquare + " → " + decision.toSquare);
             }
         }.start();
     }
@@ -272,7 +310,7 @@ public class OverlayService extends Service {
         if (nm != null) nm.createNotificationChannel(channel);
     }
 
-    private Notification buildForegroundNotification() {
+    private Notification buildNotification() {
         return new Notification.Builder(this, "chess_bot_svc")
                 .setContentTitle("Chess Assistant")
                 .setContentText("Авто-суфлер активен")
@@ -283,7 +321,7 @@ public class OverlayService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        handler.removeCallbacks(scanRunnable);
+        handler.removeCallbacks(scanLoop);
         if (timer != null) timer.cancel();
         if (virtualDisplay != null) virtualDisplay.release();
         if (mediaProjection != null) mediaProjection.stop();
@@ -291,4 +329,3 @@ public class OverlayService extends Service {
         if (overlay != null) wm.removeView(overlay);
     }
 }
-
