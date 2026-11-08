@@ -29,29 +29,28 @@ public class ChessEngine {
     public EngineMove findMove(boolean isWhite, int enemyCol, int enemyRow, boolean inCheck) {
         step++;
 
-        // Защита от шаха слоном
+        // 1. Защита от прямого шаха
         if (inCheck && !isWhite) {
             return new EngineMove("Слон", "♗", "f8", "e7", 5, 7, 4, 6, 0.1f);
         }
 
-        // Защита ферзя от слона Bg5 (h7 -> h6)
-        if (!isWhite && (enemyCol == 1 && enemyRow == 4)) {
-            return new EngineMove("Пешка", "♙", "h7", "h6", 0, 6, 0, 5, 0.15f);
+        // 2. АНТИ-ЗЕВОК: Если белый ферзь вышел на h5 (enemyCol = 7, enemyRow = 4)
+        if (!isWhite && enemyCol == 7 && enemyRow == 4) {
+            // Защищаем пешку e5 конем с b8 на c6
+            return new EngineMove("Конь", "♘", "b8", "c6", 1, 7, 2, 5, 0.4f);
+        }
+        
+        // 3. АНТИ-ЗЕВОК 2: Если белый конь или слон лезут на c4 или f3
+        if (!isWhite && (enemyCol == 2 && enemyRow == 3 || enemyCol == 5 && enemyRow == 5)) {
+            return new EngineMove("Пешка", "♙", "g7", "g6", 6, 6, 6, 5, 0.5f);
         }
 
-        // Взятие врага, если он вторгся слишком глубоко (на c7)
-        if (!isWhite && enemyRow >= 6) {
-            return new EngineMove("Ферзь", "♕", "d8", "c7", 4, 7, enemyCol, enemyRow, 0.15f);
-        }
-
-        // ВНИМАНИЕ: Все значки заменены на светлые контурные (♙ ♘ ♗ ♖ ♕ ♔) 
-        // для идеального отображения обводки на черном фоне!
+        // Базовое развитие
         if (!isWhite) {
             switch (step) {
-                case 1: return new EngineMove("Пешка", "♙", "e7", "e5", 3, 6, 3, 4, 0.8f);
-                case 2: return new EngineMove("Конь", "♘", "g8", "f6", 1, 7, 2, 5, 0.9f);
-                case 3: return new EngineMove("Конь", "♘", "b8", "c6", 6, 7, 5, 5, 0.9f);
-                case 4: return new EngineMove("Слон", "♗", "f8", "c5", 2, 7, 5, 4, 1.0f);
+                case 1: return new EngineMove("Пешка", "♙", "e7", "e5", 4, 6, 4, 4, 0.8f);
+                case 2: return new EngineMove("Конь", "♘", "g8", "f6", 6, 7, 5, 5, 0.9f);
+                case 3: return new EngineMove("Слон", "♗", "f8", "c5", 5, 7, 2, 4, 1.0f);
                 default: return new EngineMove("Король", "♔", "0-0", "0-0", 4, 7, 6, 7, 0.5f);
             }
         } else {
@@ -63,3 +62,4 @@ public class ChessEngine {
         }
     }
 }
+
