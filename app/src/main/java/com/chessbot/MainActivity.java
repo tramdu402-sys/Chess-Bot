@@ -57,8 +57,8 @@ public class MainActivity extends Activity {
         root.addView(eloSub);
 
         SeekBar slider = new SeekBar(this);
-        slider.setMax(48); // От 400 до 2800 с фиксированным шагом 50
-        slider.setProgress(22); // 1500 ELO
+        slider.setMax(48);
+        slider.setProgress(22);
 
         GradientDrawable thumb = new GradientDrawable();
         thumb.setShape(GradientDrawable.OVAL);
@@ -126,4 +126,3 @@ public class MainActivity extends Activity {
         }
     }
 }
-
