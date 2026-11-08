@@ -47,7 +47,6 @@ public class OverlayService extends Service {
     private ChessEngine engine;
     private boolean isMyColorWhite = false;
     private boolean colorDetected = false;
-    private boolean firstMoveDone = false;
     private boolean isThinking = false;
     
     private int lastHighlightHash = 0;
@@ -61,7 +60,6 @@ public class OverlayService extends Service {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
 
-    // Холст подсветки (Ровно 20% прозрачности по твоему запросу)
     private static class BoardHighlightView extends View {
         private final Paint fromFill = new Paint();
         private final Paint toFill = new Paint();
@@ -73,13 +71,11 @@ public class OverlayService extends Service {
 
         public BoardHighlightView(Context ctx) {
             super(ctx);
-            // Alpha 51 из 255 = ровно 20% непрозрачности
             fromFill.setColor(Color.argb(51, 129, 182, 76));
             toFill.setColor(Color.argb(51, 56, 189, 248));
-            
             stroke.setStyle(Paint.Style.STROKE);
             stroke.setStrokeWidth(5f);
-            stroke.setColor(Color.argb(180, 129, 182, 76)); // Обводка ярче, чтобы видеть границы
+            stroke.setColor(Color.argb(180, 129, 182, 76));
         }
 
         public void setMove(int fC, int fR, int tC, int tR, int top, int size) {
@@ -102,14 +98,12 @@ public class OverlayService extends Service {
             if (!active || sq <= 0) return;
 
             if (fC >= 0 && fR >= 0) {
-                float l = fC * sq;
-                float t = bTop + (fR * sq);
+                float l = fC * sq, t = bTop + (fR * sq);
                 canvas.drawRect(l, t, l + sq, t + sq, fromFill);
                 canvas.drawRect(l, t, l + sq, t + sq, stroke);
             }
             if (tC >= 0 && tR >= 0) {
-                float l = tC * sq;
-                float t = bTop + (tR * sq);
+                float l = tC * sq, t = bTop + (tR * sq);
                 canvas.drawRect(l, t, l + sq, t + sq, toFill);
                 canvas.drawRect(l, t, l + sq, t + sq, stroke);
             }
@@ -263,22 +257,15 @@ public class OverlayService extends Service {
             boardSize = w;
             int sq = w / 8;
 
-            // БРОНЕБОЙНЫЙ ПОИСК ДОСКИ ПО КРАЯМ ЭКРАНА
-            // Сканируем левый (x=2) и правый (x=w-3) края, где нет диалогов и аватарок
             if (boardTop == 0) {
                 for (int y = (int)(h * 0.15f); y < (int)(h * 0.65f); y += 2) {
                     int offL = (y * rStride) + (2 * pStride);
                     int offR = (y * rStride) + ((w - 3) * pStride);
-                    
                     if (offR < buf.remaining() - 4) {
                         int rL = buf.get(offL) & 0xFF, gL = buf.get(offL + 1) & 0xFF, bL = buf.get(offL + 2) & 0xFF;
                         int rR = buf.get(offR) & 0xFF, gR = buf.get(offR + 1) & 0xFF, bR = buf.get(offR + 2) & 0xFF;
-                        
-                        // Цвет доски (зеленый > 75 или бежевый), отсекаем белый цвет пузырей (>240)
                         boolean isBoardL = (gL > 75) && !(rL > 240 && gL > 240 && bL > 240);
                         boolean isBoardR = (gR > 75) && !(rR > 240 && gR > 240 && bR > 240);
-                        
-                        // Если оба края упираются в доску - мы нашли её верх!
                         if (isBoardL && isBoardR) {
                             boardTop = y;
                             break;
@@ -289,36 +276,27 @@ public class OverlayService extends Service {
 
             if (boardTop == 0) return;
 
-            // ОПРЕДЕЛЕНИЕ ЦВЕТА (ТРОЙНАЯ ПРОВЕРКА)
-            // Смотрим на 8 горизонталь (низ), проверяем Ладью (0.5), Ферзя (3.5) и Короля (4.5)
             if (!colorDetected) {
                 int py = boardTop + (int)(7.5f * sq);
-                int[] colsToCheck = { (int)(0.5f * sq), (int)(3.5f * sq), (int)(4.5f * sq) };
                 int totalBrightness = 0;
-                
-                for (int px : colsToCheck) {
+                for (int px : new int[]{(int)(0.5f * sq), (int)(3.5f * sq), (int)(4.5f * sq)}) {
                     int off = (py * rStride) + (px * pStride);
                     if (off < buf.remaining() - 4) {
                         int r = buf.get(off) & 0xFF, g = buf.get(off+1) & 0xFF, b = buf.get(off+2) & 0xFF;
                         totalBrightness += (r + g + b) / 3;
                     }
                 }
-                
-                // Если средняя яркость больше 110 — мы играем белыми
                 isMyColorWhite = (totalBrightness / 3) > 110;
                 colorDetected = true;
                 tvStatus.setText((isMyColorWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ") + " ● ЖДЁМ");
 
-                // АВТОМАТИКА ПЕРВОГО ХОДА БЕЛЫМИ
-                if (isMyColorWhite && !firstMoveDone) {
-                    firstMoveDone = true;
+                if (isMyColorWhite) {
                     autoComputeMove(-1, -1, false);
                     return;
                 }
             }
 
-            int highlightHash = 0;
-            int litCount = 0;
+            int highlightHash = 0, litCount = 0;
             int lastTargetCol = -1, lastTargetRow = -1;
             boolean kingInCheck = false;
 
@@ -327,15 +305,10 @@ public class OverlayService extends Service {
                     int px = col * sq + (sq / 2);
                     int py = boardTop + row * sq + (int)(sq * 0.15f);
                     int off = (py * rStride) + (px * pStride);
-
                     if (off < buf.remaining() - 4) {
                         int red = buf.get(off) & 0xFF, grn = buf.get(off + 1) & 0xFF, blu = buf.get(off + 2) & 0xFF;
-                        
-                        // Красный шах
                         if (red > 190 && grn < 110 && blu < 110) kingInCheck = true;
-                        
-                        // Желтый ход соперника
-                        if (red > 150 && grn > 150 && blu < 140 && (grn - blu > 40)) {
+                        if (red > 130 && grn > 130 && blu < 140 && (red - blu > 30) && (grn - blu > 30)) {
                             highlightHash += (row * 8 + col) * 31;
                             litCount++;
                             lastTargetCol = col;
@@ -345,11 +318,9 @@ public class OverlayService extends Service {
                 }
             }
 
-            // АВТОМАТИКА ОТВЕТА НА ХОД СОПЕРНИКА
             if ((litCount >= 2 && highlightHash != lastHighlightHash) || (kingInCheck && !lastCheckState)) {
                 lastHighlightHash = highlightHash;
                 lastCheckState = kingInCheck;
-                if (!isMyColorWhite) firstMoveDone = true;
                 autoComputeMove(lastTargetCol, lastTargetRow, kingInCheck);
             }
         } catch (Exception ignored) {
@@ -419,3 +390,4 @@ public class OverlayService extends Service {
         if (pillView != null) wm.removeView(pillView);
     }
 }
+
