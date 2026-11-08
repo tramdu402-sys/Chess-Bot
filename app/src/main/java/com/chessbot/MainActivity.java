@@ -3,9 +3,7 @@ package com.chessbot;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.Paint;
 import android.graphics.drawable.GradientDrawable;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
@@ -13,9 +11,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.Button;
-import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -31,135 +27,76 @@ public class MainActivity extends Activity {
                 TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
 
-    private static class ChessBackgroundView extends View {
-        private final Paint darkPaint = new Paint();
-
-        public ChessBackgroundView(Context ctx) {
-            super(ctx);
-            darkPaint.setColor(Color.parseColor("#0C1017"));
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            int size = getWidth() / 8;
-            if (size <= 0) return;
-            for (int r = 0; r < getHeight() / size + 1; r++) {
-                for (int c = 0; c < 8; c++) {
-                    if ((r + c) % 2 == 1) {
-                        canvas.drawRect(c * size, r * size, (c + 1) * size, (r + 1) * size, darkPaint);
-                    }
-                }
-            }
-        }
-    }
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
 
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.parseColor("#06080B"));
-        root.addView(new ChessBackgroundView(this));
-
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setGravity(Gravity.CENTER_HORIZONTAL);
-        content.setPadding(dp(24), dp(40), dp(24), dp(40));
-
-        TextView title = new TextView(this);
-        title.setText("CHESS SUFFLEUR");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
-        title.setLetterSpacing(0.12f);
-        content.addView(title);
-
-        TextView subTitle = new TextView(this);
-        subTitle.setText("Автоматическое чтение экрана");
-        subTitle.setTextColor(Color.parseColor("#5A6578"));
-        subTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        subTitle.setPadding(0, dp(6), 0, dp(36));
-        content.addView(subTitle);
-
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(20), dp(22), dp(20), dp(22));
-
-        GradientDrawable cardBg = new GradientDrawable();
-        cardBg.setColor(Color.parseColor("#11151D"));
-        cardBg.setCornerRadius(dp(16));
-        cardBg.setStroke(dp(1), Color.parseColor("#1E2430"));
-        card.setBackground(cardBg);
-
-        TextView eloLabel = new TextView(this);
-        eloLabel.setText("СИЛА ИГРЫ (ШАГ 50 ELO)");
-        eloLabel.setTextColor(Color.parseColor("#7D8B9B"));
-        eloLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        eloLabel.setTypeface(null, android.graphics.Typeface.BOLD);
-        card.addView(eloLabel);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER);
+        root.setBackgroundColor(Color.BLACK);
+        root.setPadding(dp(28), dp(20), dp(28), dp(20));
 
         TextView eloVal = new TextView(this);
-        eloVal.setText("1500 ELO");
-        eloVal.setTextColor(Color.parseColor("#81B64C"));
-        eloVal.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28);
+        eloVal.setText("1500");
+        eloVal.setTextColor(Color.WHITE);
+        eloVal.setTextSize(TypedValue.COMPLEX_UNIT_SP, 44);
         eloVal.setTypeface(null, android.graphics.Typeface.BOLD);
-        eloVal.setPadding(0, dp(4), 0, dp(14));
-        card.addView(eloVal);
+        eloVal.setGravity(Gravity.CENTER);
+        root.addView(eloVal);
+
+        TextView eloSub = new TextView(this);
+        eloSub.setText("ELO RATING");
+        eloSub.setTextColor(Color.parseColor("#81B64C"));
+        eloSub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        eloSub.setTypeface(null, android.graphics.Typeface.BOLD);
+        eloSub.setLetterSpacing(0.18f);
+        eloSub.setGravity(Gravity.CENTER);
+        eloSub.setPadding(0, 0, 0, dp(32));
+        root.addView(eloSub);
 
         SeekBar slider = new SeekBar(this);
-        // Диапазон от 400 до 2800 с шагом 50: всего 48 делений ((2800 - 400) / 50)
-        slider.setMax(48);
-        slider.setProgress(22); // 400 + 22 * 50 = 1500 ELO
+        slider.setMax(48); // От 400 до 2800 с шагом 50
+        slider.setProgress(22); // 1500 ELO
 
         GradientDrawable thumb = new GradientDrawable();
         thumb.setShape(GradientDrawable.OVAL);
-        thumb.setSize(dp(20), dp(20));
+        thumb.setSize(dp(18), dp(18));
         thumb.setColor(Color.parseColor("#81B64C"));
-        thumb.setStroke(dp(2), Color.WHITE);
         slider.setThumb(thumb);
 
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 currentElo = 400 + (progress * 50);
-                eloVal.setText(currentElo + " ELO");
+                eloVal.setText(String.valueOf(currentElo));
             }
             @Override public void onStartTrackingTouch(SeekBar seekBar) {}
             @Override public void onStopTrackingTouch(SeekBar seekBar) {}
         });
-        card.addView(slider);
-        content.addView(card);
-
-        TextView hints = new TextView(this);
-        hints.setText("• Сам распознает цвет и ход соперника\n• Одиночный тап — принудительный пересчет\n• Двойной тап — мгновенное закрытие");
-        hints.setTextColor(Color.parseColor("#505A69"));
-        hints.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        hints.setPadding(0, dp(24), 0, dp(32));
-        hints.setLineSpacing(dp(4), 1f);
-        content.addView(hints);
+        root.addView(slider);
 
         Button btn = new Button(this);
-        btn.setText("ЗАПУСТИТЬ ОВЕРЛЕЙ");
-        btn.setTextColor(Color.WHITE);
+        btn.setText("START");
+        btn.setTextColor(Color.BLACK);
         btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         btn.setTypeface(null, android.graphics.Typeface.BOLD);
+        btn.setLetterSpacing(0.12f);
 
         GradientDrawable btnBg = new GradientDrawable();
         btnBg.setColor(Color.parseColor("#81B64C"));
-        btnBg.setCornerRadius(dp(12));
+        btnBg.setCornerRadius(dp(24));
         btn.setBackground(btnBg);
-        btn.setPadding(0, dp(14), 0, dp(14));
+
+        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+        btnParams.setMargins(0, dp(40), 0, 0);
+        btn.setLayoutParams(btnParams);
 
         btn.setOnClickListener(v -> checkAndLaunch());
-        content.addView(btn);
+        root.addView(btn);
 
-        FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER);
-        root.addView(content, fl);
         setContentView(root);
     }
 
