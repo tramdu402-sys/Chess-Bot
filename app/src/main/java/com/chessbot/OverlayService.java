@@ -355,6 +355,19 @@ public class OverlayService extends Service {
         startStable = 0;
 
         if (!synced) {
+            int orient = BoardScanner.trySyncAfterFirstMove(o, engine);
+            if (orient != 0) {
+                myWhite = orient == 1;
+                synced = true;
+                appliedMask = o.litMask();
+                candMask = -1;
+                candCount = 0;
+                desyncFrames = 0;
+                thinkGen++;
+                boardView.clear();
+                afterMove();
+                return;
+            }
             setStatus("● ЖДУ НОВУЮ ПАРТИЮ", GRAY);
             tvPiece.setText("—");
             tvCoords.setText("с начала партии");
