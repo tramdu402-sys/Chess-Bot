@@ -17,14 +17,14 @@ jobs:
         run: python3 -c "import os, glob; [os.rename(f, f.strip()) for f in glob.glob('app/src/main/res/drawable/*') if f != f.strip()]"
 
       - name: Restore signing key
-        run: base64 -d app/stable.keystore.b64 > app/stable.keystore
+        run: tr -cd 'A-Za-z0-9+/=' < app/stable.keystore.b64 | base64 -d > app/stable.keystore
 
       - name: Generate Release Title
         id: gen_name
         run: |
           TITLES=("Shadow Gambit" "Obsidian Knight" "Silent Rook" "Phantom Queen" "Emerald Citadel" "Valkyrie Strike")
           RUN_NUM=${{ github.run_number }}
-          NAME="${TITLES[$(( RUN_NUM \%${#TITLES[@]} ))]}"
+          NAME="${TITLES[$(( RUN_NUM % ${#TITLES[@]} ))]}"
           echo "release_title=${NAME} • v1.${RUN_NUM}" >> $GITHUB_OUTPUT
 
       - name: Set up JDK 17
