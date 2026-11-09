@@ -209,6 +209,47 @@ public final class BoardScanner {
         return whiteBottom ? 1 : 2;
     }
 
+    public static final class Unblend implements Frame {
+        private final Frame base;
+        private final int top, sq, cellA, cellB, colorA, colorB;
+        private final float alpha;
+
+        public Unblend(Frame base, int top, int cellA, int colorA, int cellB, int colorB, float alpha) {
+            this.base = base;
+            this.top = top;
+            this.sq = base.width() / 8;
+            this.cellA = cellA; this.colorA = colorA;
+            this.cellB = cellB; this.colorB = colorB;
+            this.alpha = alpha;
+        }
+
+        @Override public int width() { return base.width(); }
+        @Override public int height() { return base.height(); }
+
+        private int undo(int p, int fill) {
+            int out = 0;
+            for (int shift = 16; shift >= 0; shift -= 8) {
+                float v = (((p >> shift) & 255) - ((fill >> shift) & 255) * alpha) / (1f - alpha);
+                int c = Math.round(v);
+                if (c < 0) c = 0; else if (c > 255) c = 255;
+                out |= c << shift;
+            }
+            return out;
+        }
+
+        @Override
+        public int rgb(int x, int y) {
+            int p = base.rgb(x, y);
+            if (x < 0 || y < top || sq <= 0) return p;
+            int col = x / sq, row = (y - top) / sq;
+            if (col > 7 || row > 7) return p;
+            int idx = row * 8 + col;
+            if (idx == cellA) return undo(p, colorA);
+            if (idx == cellB) return undo(p, colorB);
+            return p;
+        }
+    }
+
     public static int screenToSquare(int screenIdx, boolean whiteAtBottom) {
         int row = screenIdx / 8, col = screenIdx % 8;
         return whiteAtBottom ? (7 - row) * 8 + col : row * 8 + (7 - col);
