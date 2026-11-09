@@ -43,6 +43,9 @@ public class OverlayService extends Service {
     private static final int AMBER = Color.parseColor("#E5A93C");
     private static final int GRAY = Color.parseColor("#6B7888");
     private static final int RED = Color.parseColor("#E5534B");
+    private static final int FROM_RGB = 0x81B64C;
+    private static final int TO_RGB = 0x38BDF8;
+    private static final int FILL_ALPHA = 90;
 
     private WindowManager wm;
     private BoardHighlightView boardView;
@@ -69,6 +72,8 @@ public class OverlayService extends Service {
     private int desyncFrames = 0;
     private int thinkGen = 0;
     private long lastTapTime = 0;
+    private int hlA = -1, hlB = -1;
+    private long hlUntil = 0;
 
     private int dp(float v) {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
@@ -77,6 +82,8 @@ public class OverlayService extends Service {
     private static class BoardHighlightView extends View {
         private final Paint fromPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint toPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint fromFill = new Paint();
+        private final Paint toFill = new Paint();
         private int fC = -1, fR = -1, tC = -1, tR = -1;
         private int bTop = 0, sq = 0;
         private boolean active = false;
@@ -85,9 +92,13 @@ public class OverlayService extends Service {
         BoardHighlightView(Context ctx) {
             super(ctx);
             fromPaint.setStyle(Paint.Style.STROKE);
-            fromPaint.setColor(Color.parseColor("#81B64C"));
+            fromPaint.setColor(0xFF000000 | FROM_RGB);
             toPaint.setStyle(Paint.Style.STROKE);
-            toPaint.setColor(Color.parseColor("#38BDF8"));
+            toPaint.setColor(0xFF000000 | TO_RGB);
+            fromFill.setStyle(Paint.Style.FILL);
+            fromFill.setColor((FILL_ALPHA << 24) | FROM_RGB);
+            toFill.setStyle(Paint.Style.FILL);
+            toFill.setColor((FILL_ALPHA << 24) | TO_RGB);
         }
 
         void setMove(int fC, int fR, int tC, int tR, int top, int size) {
@@ -112,14 +123,15 @@ public class OverlayService extends Service {
             float stroke = Math.max(3f, sq * 0.05f);
             fromPaint.setStrokeWidth(stroke);
             toPaint.setStrokeWidth(stroke);
-            drawCell(canvas, fC, fR, fromPaint, stroke);
-            drawCell(canvas, tC, tR, toPaint, stroke);
+            drawCell(canvas, fC, fR, fromFill, fromPaint, stroke);
+            drawCell(canvas, tC, tR, toFill, toPaint, stroke);
             canvas.restore();
         }
 
-        private void drawCell(Canvas c, int col, int row, Paint p, float stroke) {
+        private void drawCell(Canvas c, int col, int row, Paint fill, Paint p, float stroke) {
             if (col < 0 || row < 0) return;
             float l = col * sq, t = bTop + row * sq, h = stroke / 2f;
+            c.drawRect(l, t, l + sq, t + sq, fill);
             c.drawRect(l + h, t + h, l + sq - h, t + sq - h, p);
         }
     }
@@ -339,7 +351,12 @@ public class OverlayService extends Service {
                     return;
                 }
             }
-            process(scanner.observe(f, boardTop));
+            BoardScanner.Frame view = f;
+            if (hlA >= 0 && System.currentTimeMillis() < hlUntil) {
+                view = new BoardScanner.Unblend(f, boardTop, hlA, 0xFF000000 | FROM_RGB,
+                        hlB, 0xFF000000 | TO_RGB, FILL_ALPHA / 255f);
+            }
+            process(scanner.observe(view, boardTop));
         } finally {
             img.close();
         }
@@ -364,7 +381,7 @@ public class OverlayService extends Service {
                 candCount = 0;
                 desyncFrames = 0;
                 thinkGen++;
-                boardView.clear();
+                clearHighlight();
                 afterMove();
                 return;
             }
@@ -385,7 +402,7 @@ public class OverlayService extends Service {
                 synced = false;
                 thinkGen++;
                 engine.cancel();
-                boardView.clear();
+                clearHighlight();
                 setStatus("● РАССИНХРОН", RED);
                 tvPiece.setText("—");
                 tvCoords.setText("жду новую партию");
@@ -425,7 +442,7 @@ public class OverlayService extends Service {
         appliedMask = mask;
         thinkGen++;
         engine.cancel();
-        boardView.clear();
+        clearHighlight();
         afterMove();
     }
 
@@ -439,7 +456,7 @@ public class OverlayService extends Service {
         desyncFrames = 0;
         thinkGen++;
         engine.cancel();
-        boardView.clear();
+        clearHighlight();
         afterMove();
     }
 
@@ -452,10 +469,15 @@ public class OverlayService extends Service {
         desyncFrames = 0;
         thinkGen++;
         if (engine != null) engine.cancel();
-        if (boardView != null) boardView.clear();
+        clearHighlight();
     }
 
     private int myColor() { return myWhite ? Position.WHITE : Position.BLACK; }
+
+    private void clearHighlight() {
+        if (boardView != null) boardView.clear();
+        hlUntil = System.currentTimeMillis() + 700;
+    }
 
     private void afterMove() {
         String side = myWhite ? "БЕЛЫЕ" : "ЧЁРНЫЕ";
@@ -506,6 +528,9 @@ public class OverlayService extends Service {
         tvCoords.setText(m.fromCoord + " → " + m.toCoord);
         int a = BoardScanner.squareToScreen(m.from, myWhite);
         int b = BoardScanner.squareToScreen(m.to, myWhite);
+        hlA = a;
+        hlB = b;
+        hlUntil = Long.MAX_VALUE;
         boardView.setMove(a % 8, a / 8, b % 8, b / 8, boardTop, boardW);
     }
 
