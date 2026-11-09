@@ -296,10 +296,20 @@ public class OverlayService extends Service {
     private final Runnable scanLoop = new Runnable() {
         @Override
         public void run() {
-            try { scanScreen(); } catch (Throwable ignored) { }
+            try {
+                scanScreen();
+            } catch (Throwable t) {
+                String m = t.getClass().getSimpleName() + ": " + t.getMessage();
+                setStatus("● ОШИБКА", RED);
+                tvPiece.setText("—");
+                tvCoords.setText(m.length() > 60 ? m.substring(0, 60) : m);
+            }
             handler.postDelayed(this, 250);
         }
     };
+
+    private byte[] frameBuf;
+    private int fw, fh, fPs, fRs, framesGot;
 
     private static final class BufFrame implements BoardScanner.Frame {
         final ByteBuffer buf;
@@ -324,42 +334,57 @@ public class OverlayService extends Service {
     private void scanScreen() {
         if (imageReader == null || engine == null) return;
         Image img = imageReader.acquireLatestImage();
-        if (img == null) return;
-        try {
-            Image.Plane plane = img.getPlanes()[0];
-            BufFrame f = new BufFrame(plane.getBuffer(), img.getWidth(), img.getHeight(),
-                    plane.getPixelStride(), plane.getRowStride());
+        if (img != null) {
+            try {
+                Image.Plane plane = img.getPlanes()[0];
+                ByteBuffer src = plane.getBuffer();
+                int need = src.remaining();
+                if (frameBuf == null || frameBuf.length != need) frameBuf = new byte[need];
+                src.get(frameBuf, 0, need);
+                fw = img.getWidth();
+                fh = img.getHeight();
+                fPs = plane.getPixelStride();
+                fRs = plane.getRowStride();
+                framesGot++;
+            } finally {
+                img.close();
+            }
+        }
+        if (frameBuf == null) {
+            setStatus("● ЖДУ КАДР...", GRAY);
+            return;
+        }
+        BufFrame f = new BufFrame(ByteBuffer.wrap(frameBuf), fw, fh, fPs, fRs);
 
-            if (boardTop < 0) {
-                int top = scanner.detectBoard(f);
-                if (top < 0) {
-                    setStatus("● ПОИСК ДОСКИ...", GRAY);
-                    return;
-                }
-                boardTop = top;
-                boardW = f.w;
+        if (boardTop < 0) {
+            int top = scanner.detectBoard(f);
+            if (top < 0) {
+                setStatus("● ПОИСК ДОСКИ · " + fw + "x" + fh + " · #" + framesGot, GRAY);
+                int sx = fw / 16, sy = (int) (fh * 0.40f);
+                tvCoords.setText(String.format("%06X %06X", f.rgb(sx, sy), f.rgb(sx * 3, sy)));
+                return;
+            }
+            boardTop = top;
+            boardW = f.w;
+            verifyFails = 0;
+            resetGame();
+        } else if (++scanTick % 8 == 0) {
+            if (scanner.verifyBoard(f, boardTop)) {
+                verifyFails = 0;
+            } else if (++verifyFails >= 3) {
+                boardTop = -1;
                 verifyFails = 0;
                 resetGame();
-            } else if (++scanTick % 8 == 0) {
-                if (scanner.verifyBoard(f, boardTop)) {
-                    verifyFails = 0;
-                } else if (++verifyFails >= 3) {
-                    boardTop = -1;
-                    verifyFails = 0;
-                    resetGame();
-                    setStatus("● ПОИСК ДОСКИ...", GRAY);
-                    return;
-                }
+                setStatus("● ПОИСК ДОСКИ...", GRAY);
+                return;
             }
-            BoardScanner.Frame view = f;
-            if (hlA >= 0 && System.currentTimeMillis() < hlUntil) {
-                view = new BoardScanner.Unblend(f, boardTop, hlA, 0xFF000000 | FROM_RGB,
-                        hlB, 0xFF000000 | TO_RGB, FILL_ALPHA / 255f);
-            }
-            process(scanner.observe(view, boardTop));
-        } finally {
-            img.close();
         }
+        BoardScanner.Frame view = f;
+        if (hlA >= 0 && System.currentTimeMillis() < hlUntil) {
+            view = new BoardScanner.Unblend(f, boardTop, hlA, 0xFF000000 | FROM_RGB,
+                    hlB, 0xFF000000 | TO_RGB, FILL_ALPHA / 255f);
+        }
+        process(scanner.observe(view, boardTop));
     }
 
     private void process(BoardScanner.Obs o) {
