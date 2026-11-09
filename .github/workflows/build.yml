@@ -16,8 +16,22 @@ jobs:
       - name: Fix file names
         run: python3 -c "import os, glob; [os.rename(f, f.strip()) for f in glob.glob('app/src/main/res/drawable/*') if f != f.strip()]"
 
-      - name: Restore signing key
-        run: tr -cd 'A-Za-z0-9+/=' < app/stable.keystore.b64 | base64 -d > app/stable.keystore
+      - name: Restore signing key from cache
+        id: ks_cache
+        uses: actions/cache@v4
+        with:
+          path: app/stable.keystore
+          key: stable-keystore-v1
+
+      - name: Create signing key (only the first time)
+        if: steps.ks_cache.outputs.cache-hit != 'true'
+        run: |
+          keytool -genkeypair -v -storetype PKCS12 \
+            -keystore app/stable.keystore \
+            -storepass android -keypass android \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 36500 \
+            -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Generate Release Title
         id: gen_name
